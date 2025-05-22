@@ -1,0 +1,7 @@
+DATA/
+build/
+models/
+*.egg-info/
+__pycache__/
+.vscode/
+*.so
