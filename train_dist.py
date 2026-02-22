@@ -43,7 +43,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from modules import *
 from sampler import *
 from utils import *
-from pad_df import pad_df_to_gpu_multiple, make_groups
+from df_split import make_balance_plan
 import torch.distributed as dist # 确保已有或添加
 from torch.profiler import profile, record_function, ProfilerActivity # 新增
 
@@ -517,63 +517,68 @@ else:
         raw_preds_tot = list()
         raw_trues_tot = list()
         # train_param['batch_size'] = orig_batch_size
-        # itr_tot = max(len(eval_df) // train_param['batch_size'] // args.num_gpus, 1) * args.num_gpus
-        # train_param['batch_size'] = math.ceil(len(eval_df) / itr_tot)
-        df2, pad_rows, n_mini = pad_df_to_gpu_multiple(eval_df, train_param['batch_size'], args.num_gpus)
-        grouped_df = make_groups(df2, train_param['batch_size'])
-        assert grouped_df.ngroups == n_mini
-        assert n_mini % args.num_gpus == 0
-        multi_mfgs = list()
-        multi_root = list()
-        multi_ts = list()
-        multi_eid = list()
-        multi_block = list()
-
-        for _, rows in tqdm(
-            grouped_df,
-            total=n_mini,
-            desc="Eval batching",
-        ):
-            root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-            ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
-            if sampler is not None:
-                if 'no_neg' in sample_param and sample_param['no_neg']:
-                    pos_root_end = root_nodes.shape[0] * 2 // 3
-                    sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
-                else:
-                    sampler.sample(root_nodes, ts)
-                ret = sampler.get_ret()
-            if gnn_param['arch'] != 'identity':
-                mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
-            else:
-                mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
-            multi_mfgs.append(mfgs)
-            multi_root.append(root_nodes)
-            multi_ts.append(ts)
-            multi_eid.append(rows['Unnamed: 0'].values)
-            if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
-                multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
-            if len(multi_mfgs) == args.num_gpus:
-                model_state = [1] * (args.num_gpus + 1)
-                my_model_state = [None]
-                torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
-                multi_mfgs.append(None)
-                my_mfgs = [None]
-                torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
-                if mailbox is not None:
-                    multi_root.append(None)
-                    multi_ts.append(None)
-                    multi_eid.append(None)
-                    my_root = [None]
-                    my_ts = [None]
-                    my_eid = [None]
-                    torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
-                    if memory_param['deliver_to'] == 'neighbors':
-                        multi_block.append(None)
-                        my_block = [None]
-                        torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
+        # Apply balanced data distribution plan
+        df_out, step_ids, gpu_ids = make_balance_plan(eval_df, train_param['batch_size'], args.num_gpus)
+        
+        # Calculate total steps
+        total_steps = max(step_ids) + 1 if step_ids else 0
+        
+        # Process each step (each step contains args.num_gpus batches)
+        for step in tqdm(range(total_steps), desc="Eval batching"):
+            multi_mfgs = list()
+            multi_root = list()
+            multi_ts = list()
+            multi_eid = list()
+            multi_block = list()
+            
+            # Process each GPU's batch in this step
+            for gpu in range(args.num_gpus):
+                # Get rows for this step and GPU
+                mask = [(s == step and g == gpu) for s, g in zip(step_ids, gpu_ids)]
+                rows = df_out[mask]
+                
+                if len(rows) > 0:
+                    root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
+                    ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+                    if sampler is not None:
+                        if 'no_neg' in sample_param and sample_param['no_neg']:
+                            pos_root_end = root_nodes.shape[0] * 2 // 3
+                            sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
+                        else:
+                            sampler.sample(root_nodes, ts)
+                        ret = sampler.get_ret()
+                    if gnn_param['arch'] != 'identity':
+                        mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
+                    else:
+                        mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
+                    multi_mfgs.append(mfgs)
+                    multi_root.append(root_nodes)
+                    multi_ts.append(ts)
+                    multi_eid.append(rows['Unnamed: 0'].values)
+                    if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
+                        multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
+            
+            # Distribute to GPUs
+            model_state = [1] * (args.num_gpus + 1)
+            my_model_state = [None]
+            torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
+            multi_mfgs.append(None)
+            my_mfgs = [None]
+            torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
+            if mailbox is not None:
+                multi_root.append(None)
+                multi_ts.append(None)
+                multi_eid.append(None)
+                my_root = [None]
+                my_ts = [None]
+                my_eid = [None]
+                torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
+                torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
+                torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
+                if memory_param['deliver_to'] == 'neighbors':
+                    multi_block.append(None)
+                    my_block = [None]
+                    torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
                         
 
 
@@ -639,65 +644,71 @@ else:
         train_df = df[:train_edge_end]
         
         
-        df2, pad_rows, n_mini = pad_df_to_gpu_multiple(train_df, train_param['batch_size'], args.num_gpus)
-        grouped_df = make_groups(df2, train_param['batch_size'])
-        assert grouped_df.ngroups == n_mini
-        assert n_mini % args.num_gpus == 0
-
-     
-
-        for _, rows in tqdm(
-                grouped_df,
-                total=n_mini,
-                desc="Train batching",
-            ):
+        # Apply balanced data distribution plan
+        df_out, step_ids, gpu_ids = make_balance_plan(train_df, train_param['batch_size'], args.num_gpus)
+        
+        # Calculate total steps
+        total_steps = max(step_ids) + 1 if step_ids else 0
+        
+        # Process each step (each step contains args.num_gpus batches)
+        for step in tqdm(range(total_steps), desc="Train batching"):
             t_tot_s = time.time()
-            root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-            ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
-            if sampler is not None:
-                if 'no_neg' in sample_param and sample_param['no_neg']:
-                    pos_root_end = root_nodes.shape[0] * 2 // 3
-                    sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
-                else:
-                    sampler.sample(root_nodes, ts)
-                ret = sampler.get_ret()
-                time_sample += ret[0].sample_time()
-            if gnn_param['arch'] != 'identity':
-                mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
-            else:
-                mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
-            multi_mfgs.append(mfgs)
-            multi_root.append(root_nodes)
-            multi_ts.append(ts)
-            multi_eid.append(rows['Unnamed: 0'].values)
-            if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
-                multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
-            if len(multi_mfgs) == args.num_gpus:
-                model_state = [0] * (args.num_gpus + 1)
-                my_model_state = [None]
-                torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
-                multi_mfgs.append(None)
-                my_mfgs = [None]
-                torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
-                if mailbox is not None:
-                    multi_root.append(None)
-                    multi_ts.append(None)
-                    multi_eid.append(None)
-                    my_root = [None]
-                    my_ts = [None]
-                    my_eid = [None]
-                    torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
-                    if memory_param['deliver_to'] == 'neighbors':
-                        multi_block.append(None)
-                        my_block = [None]
-                        torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
-                multi_mfgs = list()
-                multi_root = list()
-                multi_ts = list()
-                multi_eid = list()
-                multi_block = list()
+            multi_mfgs = list()
+            multi_root = list()
+            multi_ts = list()
+            multi_eid = list()
+            multi_block = list()
+            
+            # Process each GPU's batch in this step
+            for gpu in range(args.num_gpus):
+                # Get rows for this step and GPU
+                mask = [(s == step and g == gpu) for s, g in zip(step_ids, gpu_ids)]
+                rows = df_out[mask]
+                
+                if len(rows) > 0:
+                    root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
+                    ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+                    if sampler is not None:
+                        if 'no_neg' in sample_param and sample_param['no_neg']:
+                            pos_root_end = root_nodes.shape[0] * 2 // 3
+                            sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
+                        else:
+                            sampler.sample(root_nodes, ts)
+                        ret = sampler.get_ret()
+                        time_sample += ret[0].sample_time()
+                    if gnn_param['arch'] != 'identity':
+                        mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
+                    else:
+                        mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
+                    multi_mfgs.append(mfgs)
+                    multi_root.append(root_nodes)
+                    multi_ts.append(ts)
+                    multi_eid.append(rows['Unnamed: 0'].values)
+                    if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
+                        multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
+            
+            # Distribute to GPUs
+            model_state = [0] * (args.num_gpus + 1)
+            my_model_state = [None]
+            torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
+            multi_mfgs.append(None)
+            my_mfgs = [None]
+            torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
+            if mailbox is not None:
+                multi_root.append(None)
+                multi_ts.append(None)
+                multi_eid.append(None)
+                my_root = [None]
+                my_ts = [None]
+                my_eid = [None]
+                torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
+                torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
+                torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
+                if memory_param['deliver_to'] == 'neighbors':
+                    multi_block.append(None)
+                    my_block = [None]
+                    torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
+            time_tot += time.time() - t_tot_s
             time_tot += time.time() - t_tot_s
         model_state = [5] * (args.num_gpus + 1)
         my_model_state = [None]
