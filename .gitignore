@@ -51,3 +51,5 @@ trace_epoch1_rank_1.json
 traces/
 distributed_trace.json
 *.so
+slurm_script/
+logs_*
