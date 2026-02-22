@@ -1,7 +1,7 @@
 ############################################
 # 1️⃣ 运行环境优化（高性能训练模式）
 ############################################
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=2,3
 export TORCH_DISTRIBUTED_DEBUG=OFF
 export LOG_LEVEL=INFO
 export NUMBA_DEBUG=0
@@ -29,13 +29,13 @@ export TOKENIZERS_PARALLELISM=false
 ############################################
 # 2️⃣ 启动分布式训练
 ############################################
-/home/sqp17/miniforge3/envs/simple_py310/bin/python -O -m torch.distributed.run \
+/home/sqp17/miniconda3/envs/simple_py310/bin/python -O -m torch.distributed.run \
     --nproc_per_node=3 \
     --master_addr=127.0.0.1 \
     --master_port=29500 \
     train_dist.py \
     --dataset LASTFM \
-    --config /home/sqp17/Projects/orginal_tgl/original_tgl/config/dist/TGN.yml \
+    --config /home/sqp17/Projects/original_tgl/config/dist/TGN.yml \
     --num_gpus 2 \
     --rnd_edim 128 \
     --rnd_ndim 128
@@ -45,7 +45,7 @@ export TOKENIZERS_PARALLELISM=false
 ############################################
 # 1️⃣ 运行环境优化（高性能训练模式）
 ############################################
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=2,3
 export TORCH_DISTRIBUTED_DEBUG=OFF
 export LOG_LEVEL=INFO
 export NUMBA_DEBUG=0
@@ -68,7 +68,7 @@ export TORCH_NCCL_BLOCKING_WAIT=0
 export OMP_NUM_THREADS=8
 export MKL_NUM_THREADS=8
 export TOKENIZERS_PARALLELISM=false
-/home/sqp17/miniforge3/envs/simple_py310/bin/python \
+/home/sqp17/miniconda3/envs/simple_py310/bin/python \
     -m viztracer \
     --min_duration 200us \
     --output_file distributed_trace.json \
@@ -79,4 +79,4 @@ export TOKENIZERS_PARALLELISM=false
     --master_port=29505 \
     train_dist.py \
     --data LASTFM \
-    --config /home/sqp17/Projects/orginal_tgl/original_tgl/config/dist/TGN.yml  \
+    --config /home/sqp17/Projects/original_tgl/config/dist/TGN.yml  \

@@ -28,7 +28,7 @@ export MKL_NUM_THREADS=8
 export TOKENIZERS_PARALLELISM=false
 
 # Python 解释器路径 (根据您的路径修改)
-PYTHON_BIN="/home/sqp17/miniforge3/envs/simple_py310/bin/python"
+PYTHON_BIN="/home/sqp17/miniconda3/envs/simple_py310/bin/python"
 
 # ==========================================
 # 2. 实验循环配置
@@ -67,7 +67,7 @@ do
         --master_port=$((29500 + i)) \
         train_dist.py \
         --data LASTFM \
-        --config /home/sqp17/Projects/orginal_tgl/original_tgl/config/dist/TGN.yml \
+        --config /home/sqp17/Projects/original_tgl/config/dist/TGN.yml \
         --num_gpus 2 \
         --rnd_edim 128 \
         --rnd_ndim 128 \
