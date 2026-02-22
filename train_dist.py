@@ -1,15 +1,26 @@
 import argparse
 import os
+import time
+
+start_time = time.time()
 
 parser=argparse.ArgumentParser()
-parser.add_argument('--data', type=str, help='dataset name')
+parser.add_argument('--dataset', type=str, help='dataset name')
 parser.add_argument('--config', type=str, help='path to config file')
-parser.add_argument('--seed', type=int, default=0, help='random seed to use')
-parser.add_argument('--num_gpus', type=int, default=4, help='number of gpus to use')
+parser.add_argument(
+    "--seed", action="store_const", const=42, default=None, help="set random seed"
+)
+parser.add_argument('--num_gpus', type=int, default=2, help='number of gpus to use')
 parser.add_argument('--omp_num_threads', type=int, default=8)
-parser.add_argument("--local_rank", type=int, default=-1)
+parser.add_argument(
+    "--rnd_edim", type=int, default=128
+)  # if your dataset has no edge features, set rnd_edim > 0 to use random edge features
+parser.add_argument(
+    "--rnd_ndim", type=int, default=128
+)  # if your dataset has no node features, set rnd_ndim > 0 to use random node features
 args=parser.parse_args()
-
+if 'LOCAL_RANK' in os.environ:
+    args.local_rank = int(os.environ['LOCAL_RANK'])
 
 # set which GPU to use
 if args.local_rank < args.num_gpus:
@@ -32,19 +43,26 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from modules import *
 from sampler import *
 from utils import *
+from pad_df import pad_df_to_gpu_multiple, make_groups
+import torch.distributed as dist # 确保已有或添加
+from torch.profiler import profile, record_function, ProfilerActivity # 新增
 
+        
 def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-set_seed(args.seed)
 torch.distributed.init_process_group(backend='gloo', timeout=datetime.timedelta(0, 3600))
+
+nccl_group = None
+# if args.local_rank < args.num_gpus:
+    # 这一行移到这里
 nccl_group = torch.distributed.new_group(ranks=list(range(args.num_gpus)), backend='nccl')
 
 if args.local_rank == 0:
-    _node_feats, _edge_feats = load_feat(args.data)
+    _node_feats, _edge_feats = load_feat(d=args.dataset, rand_de=args.rnd_edim, rand_dn=args.rnd_ndim,)
 dim_feats = [0, 0, 0, 0, 0, 0]
 if args.local_rank == 0:
     if _node_feats is not None:
@@ -70,23 +88,23 @@ torch.distributed.broadcast_object_list(dim_feats, src=0)
 if args.local_rank > 0 and args.local_rank < args.num_gpus:
     node_feats = None
     edge_feats = None
-    if os.path.exists('DATA/{}/node_features.pt'.format(args.data)):
+    if dim_feats[0] > 0:
         node_feats = get_shared_mem_array('node_feats', (dim_feats[0], dim_feats[1]), dtype=dim_feats[2])
-    if os.path.exists('DATA/{}/edge_features.pt'.format(args.data)):
+    if dim_feats[3] > 0:
         edge_feats = get_shared_mem_array('edge_feats', (dim_feats[3], dim_feats[4]), dtype=dim_feats[5])
 sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
 orig_batch_size = train_param['batch_size']
 if args.local_rank == 0:
     if not os.path.isdir('models'):
         os.mkdir('models')
-    path_saver = ['models/{}_{}.pkl'.format(args.data, time.time())]
+    path_saver = ['models/{}_{}.pkl'.format(args.dataset, time.time())]
 else:
     path_saver = [None]
 torch.distributed.broadcast_object_list(path_saver, src=0)
 path_saver = path_saver[0]
 
 if args.local_rank == args.num_gpus:
-    g, df = load_graph(args.data)
+    g, df = load_graph(args.dataset)
     num_nodes = [g['indptr'].shape[0] - 1]
 else:
     num_nodes = [None]
@@ -100,7 +118,7 @@ if memory_param['type'] != 'none':
         node_memory = create_shared_mem_array('node_memory', torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
         node_memory_ts = create_shared_mem_array('node_memory_ts', torch.Size([num_nodes]), dtype=torch.float32)
         mails = create_shared_mem_array('mails', torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = create_shared_mem_array('mail_ts', torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        mail_ts = create_shared_mem_array('mails_ts', torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
         next_mail_pos = create_shared_mem_array('next_mail_pos', torch.Size([num_nodes]), dtype=torch.long)
         update_mail_pos = create_shared_mem_array('update_mail_pos', torch.Size([num_nodes]), dtype=torch.int32)
         torch.distributed.barrier()
@@ -115,7 +133,7 @@ if memory_param['type'] != 'none':
         node_memory = get_shared_mem_array('node_memory', torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
         node_memory_ts = get_shared_mem_array('node_memory_ts', torch.Size([num_nodes]), dtype=torch.float32)
         mails = get_shared_mem_array('mails', torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = get_shared_mem_array('mail_ts', torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        mail_ts = get_shared_mem_array('mails_ts', torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
         next_mail_pos = get_shared_mem_array('next_mail_pos', torch.Size([num_nodes]), dtype=torch.long)
         update_mail_pos = get_shared_mem_array('update_mail_pos', torch.Size([num_nodes]), dtype=torch.int32)
     mailbox = MailBox(memory_param, num_nodes, dim_feats[4], node_memory, node_memory_ts, mails, mail_ts, next_mail_pos, update_mail_pos)
@@ -170,10 +188,21 @@ class DataPipelineThread(threading.Thread):
     def get_block(self):
         return self.block
 
+start_time = time.time()
 
 if args.local_rank < args.num_gpus:
     # GPU worker process
     model = GeneralModel(dim_feats[1], dim_feats[4], sample_param, memory_param, gnn_param, train_param).cuda()
+    
+    def count_parameters(model: torch.nn.Module) -> tuple[int, int]:
+        total = sum(p.numel() for p in model.parameters())
+        trainable = sum(
+            p.numel() for p in model.parameters() if p.requires_grad
+        )
+        return total, trainable
+    
+    total_params, trainable_params = count_parameters(model)
+    print(f"[Rank {args.local_rank}] Model parameters: total={total_params} trainable={trainable_params}")
     find_unused_parameters = True if sample_param['history'] > 1 else False
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], process_group=nccl_group, output_device=args.local_rank, find_unused_parameters=find_unused_parameters)
     creterion = torch.nn.BCEWithLogitsLoss()
@@ -183,11 +212,91 @@ if args.local_rank < args.num_gpus:
         mailbox.allocate_pinned_memory_buffers(sample_param, train_param['batch_size'])
     tot_loss = 0
     prev_thread = None
+    # Train start->start intervals (excluding val/test) for fair comparison
+    train_s2s_pairs = []   # list[(cuda_event_prev, cuda_event_curr)] for GPU-stream intervals
+    train_s2s_wall = []    # list[float] wall-clock intervals in seconds
+    _last_train_ev = None
+    _last_train_wall = None
+    
+    
+    
+    # ================= [新增代码 START] =================
+    # 计数器初始化
+    cur_epoch = 0
+    cur_step = 0
+    target_profile_epoch = 1  # 第2个epoch (索引从0开始)
+    profile_steps = 10        # 统计10个minibatch
+    
+    
+    def trace_handler(p):
+        # 保存文件名带上 rank 和 epoch
+        output_filename = f"trace_epoch{target_profile_epoch}_rank_{args.local_rank}.json"
+        p.export_chrome_trace(output_filename)
+        print(f"[Rank {args.local_rank}] Trace saved to {output_filename}")
+
+    # 初始化 Profiler (schedule=None 表示手动控制)
+    prof = profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=None, 
+        on_trace_ready=trace_handler,
+        record_shapes=True,
+        with_stack=True,
+        with_flops=False,
+    )
+
+    def _record_train_start():
+        global _last_train_ev, _last_train_wall
+        ev = torch.cuda.Event(enable_timing=True)
+        ev.record(torch.cuda.current_stream())
+        now_wall = time.perf_counter()
+
+        if _last_train_ev is not None:
+            train_s2s_pairs.append((_last_train_ev, ev))
+        if _last_train_wall is not None:
+            train_s2s_wall.append(now_wall - _last_train_wall)
+
+        _last_train_ev = ev
+        _last_train_wall = now_wall
+
+    def _reset_train_chain():
+        global _last_train_ev, _last_train_wall
+        _last_train_ev = None
+        _last_train_wall = None
     while True:
         my_model_state = [None]
         model_state = [None] * (args.num_gpus + 1)
         torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
         if my_model_state[0] == -1:
+            if len(train_s2s_pairs) >= 1:
+                torch.cuda.synchronize()
+                dt_ms = [
+                    ev_prev.elapsed_time(ev_curr)
+                    for (ev_prev, ev_curr) in train_s2s_pairs
+                ]
+
+                dt_ms_sorted = sorted(dt_ms)
+                n = len(dt_ms_sorted)
+                p50 = dt_ms_sorted[int(0.50*(n-1))]
+                p90 = dt_ms_sorted[int(0.90*(n-1))]
+                p99 = dt_ms_sorted[int(0.99*(n-1))]
+                avg = sum(dt_ms_sorted) / n
+
+                print(f"[rank {args.local_rank}] minibatch start->start (GPU stream): "
+                      f"n={n} avg={avg:.3f}ms p50={p50:.3f}ms p90={p90:.3f}ms p99={p99:.3f}ms")
+
+            # wall-clock summary (same boundaries as GPU-stream metric)
+            if len(train_s2s_wall) >= 1:
+                dt_s = list(train_s2s_wall)
+                dt_s_sorted = sorted(dt_s)
+                n = len(dt_s_sorted)
+                p50 = dt_s_sorted[int(0.50*(n-1))]
+                p90 = dt_s_sorted[int(0.90*(n-1))]
+                p99 = dt_s_sorted[int(0.99*(n-1))]
+                avg = sum(dt_s_sorted) / n
+
+                print(f"[rank {args.local_rank}] minibatch start->start (wall): "
+                      f"n={n} avg={avg*1000:.3f}ms p50={p50*1000:.3f}ms p90={p90*1000:.3f}ms p99={p99*1000:.3f}ms")
+            # --------------------------------------
             break
         elif my_model_state[0] == 4:
             continue
@@ -200,6 +309,14 @@ if args.local_rank < args.num_gpus:
         elif my_model_state[0] == 5:
             torch.distributed.gather_object(float(tot_loss), None, dst=args.num_gpus)
             tot_loss = 0
+            
+            # ================= [新增代码 START] =================
+            print(f"[Rank {args.local_rank}] Finished Epoch {cur_epoch}, steps: {cur_step}")
+            cur_epoch += 1 # 进入下一个 epoch
+            cur_step = 0   # 重置 step
+            # ================= [新增代码 END] =================
+            
+            
             continue
         elif my_model_state[0] == 0:
             if prev_thread is not None:
@@ -225,14 +342,40 @@ if args.local_rank < args.num_gpus:
                 curr_thread.start()
                 prev_thread.join()
                 # with torch.cuda.stream(prev_thread.get_stream()):
+                _record_train_start()
                 mfgs = prev_thread.get_mfgs()
+                
+                should_prof = False
+                
+                # ================= [新增代码 START] =================
+                # 只有在目标 epoch 才进行 profile
+                if should_prof == True and  cur_epoch == target_profile_epoch:
+                    if cur_step == 0:
+                        prof.start() # 开始第1个batch
+                        print(f"[Rank {args.local_rank}] Profiler STARTED at epoch {cur_epoch}")
+                    
+                    if cur_step < profile_steps:
+                        prof.step()  # 标记一步
+                # ================= [新增代码 END] =================
+                
+                
                 model.train()
                 optimizer.zero_grad()
-                pred_pos, pred_neg = model(mfgs)
-                loss = creterion(pred_pos, torch.ones_like(pred_pos))
-                loss += creterion(pred_neg, torch.zeros_like(pred_neg))
-                loss.backward()
-                optimizer.step()
+                
+                with record_function("model_step"):
+                    pred_pos, pred_neg = model(mfgs)
+                    loss = creterion(pred_pos, torch.ones_like(pred_pos))
+                    loss += creterion(pred_neg, torch.zeros_like(pred_neg))
+                    loss.backward()
+                    optimizer.step()
+                    
+                    
+                if should_prof == True and  cur_epoch == target_profile_epoch:
+                    if cur_step == profile_steps - 1:
+                        prof.stop() # 跑完10个batch后停止
+                        print(f"[Rank {args.local_rank}] Profiler STOPPED after {profile_steps} steps")
+                
+                cur_step += 1 # 增加 step 计数
                 with torch.no_grad():
                     tot_loss += float(loss)
                 if mailbox is not None:
@@ -274,6 +417,7 @@ if args.local_rank < args.num_gpus:
             if prev_thread is not None:
                 # finish last training mini-batch
                 prev_thread.join()
+                _record_train_start()
                 mfgs = prev_thread.get_mfgs()
                 model.train()
                 optimizer.zero_grad()
@@ -298,6 +442,8 @@ if args.local_rank < args.num_gpus:
                             if args.local_rank == 0:
                                 mailbox.update_next_mail_pos()
                 prev_thread = None
+            # Cut the train start->start chain so val/test time is excluded
+            _reset_train_chain()
             my_mfgs = [None]
             multi_mfgs = [None] * (args.num_gpus + 1)
             torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
@@ -306,7 +452,7 @@ if args.local_rank < args.num_gpus:
             model.eval()
             with torch.no_grad():
                 if mailbox is not None:
-                    mailbox.prep_input_mails(mfgs[0])
+                    mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=True)
                 pred_pos, pred_neg = model(mfgs)
                 if mailbox is not None:
                     my_root = [None]
@@ -336,10 +482,19 @@ if args.local_rank < args.num_gpus:
                             mailbox.update_next_mail_pos()
                 y_pred = torch.cat([pred_pos, pred_neg], dim=0).sigmoid().cpu()
                 y_true = torch.cat([torch.ones(pred_pos.size(0)), torch.zeros(pred_neg.size(0))], dim=0)
+
+                # ... (前向传播和计算逻辑不变)
+
+                
+                # 1. 计算局部指标 (为了复现作者的“错误”算法)
                 ap = average_precision_score(y_true, y_pred)
                 auc = roc_auc_score(y_true, y_pred)
-                torch.distributed.gather_object(float(ap), None, dst=args.num_gpus)
-                torch.distributed.gather_object(float(auc), None, dst=args.num_gpus)
+                
+
+                
+                # 3. [新增] 发送原始预测值和标签 (为了计算“正确”算法)
+                # 转为 numpy 以减小序列化开销，且 sklearn 需要 numpy
+                torch.distributed.gather_object((y_pred.numpy(), y_true.numpy()), None, dst=args.num_gpus)
 else:
     # hosting process
     train_edge_end = df[df['ext_roll'].gt(0)].index[0]
@@ -359,17 +514,26 @@ else:
             eval_df = df[val_edge_end:]
         elif mode == 'train':
             eval_df = df[:train_edge_end]
-        ap_tot = list()
-        auc_tot = list()
-        train_param['batch_size'] = orig_batch_size
-        itr_tot = max(len(eval_df) // train_param['batch_size'] // args.num_gpus, 1) * args.num_gpus
-        train_param['batch_size'] = math.ceil(len(eval_df) / itr_tot)
+        raw_preds_tot = list()
+        raw_trues_tot = list()
+        # train_param['batch_size'] = orig_batch_size
+        # itr_tot = max(len(eval_df) // train_param['batch_size'] // args.num_gpus, 1) * args.num_gpus
+        # train_param['batch_size'] = math.ceil(len(eval_df) / itr_tot)
+        df2, pad_rows, n_mini = pad_df_to_gpu_multiple(eval_df, train_param['batch_size'], args.num_gpus)
+        grouped_df = make_groups(df2, train_param['batch_size'])
+        assert grouped_df.ngroups == n_mini
+        assert n_mini % args.num_gpus == 0
         multi_mfgs = list()
         multi_root = list()
         multi_ts = list()
         multi_eid = list()
         multi_block = list()
-        for _, rows in eval_df.groupby(eval_df.index // train_param['batch_size']):
+
+        for _, rows in tqdm(
+            grouped_df,
+            total=n_mini,
+            desc="Eval batching",
+        ):
             root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
             ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
             if sampler is not None:
@@ -410,22 +574,44 @@ else:
                         multi_block.append(None)
                         my_block = [None]
                         torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
-                gathered_ap = [None] * (args.num_gpus + 1)
-                gathered_auc = [None] * (args.num_gpus + 1)
-                torch.distributed.gather_object(float(0), gathered_ap, dst=args.num_gpus)
-                torch.distributed.gather_object(float(0), gathered_auc, dst=args.num_gpus)
-                ap_tot += gathered_ap[:-1]
-                auc_tot += gathered_auc[:-1]
+                        
+
+
+                
+                # [新增] 接收原始数据
+                gathered_raw = [None] * (args.num_gpus + 1)
+                # 这里的 src 不需要指定，因为大家都在 gather，主进程负责收
+                torch.distributed.gather_object(None, gathered_raw, dst=args.num_gpus)
+                
+                # 提取并保存数据 (排除最后一个，因为那是主进程自己的占位符)
+                for res in gathered_raw[:-1]:
+                    if res is not None:
+                        raw_preds_tot.append(res[0])
+                        raw_trues_tot.append(res[1])
+                
+
                 multi_mfgs = list()
                 multi_root = list()
                 multi_ts = list()
                 multi_eid = list()
                 multi_block = list()
-            pbar.update(1)
-        ap = float(torch.tensor(ap_tot).mean())
-        auc = float(torch.tensor(auc_tot).mean())
-        return ap, auc
 
+
+        
+        # 2. 正确的算法 (Correct/Global)
+        if len(raw_preds_tot) > 0:
+            all_preds = np.concatenate(raw_preds_tot)
+            all_trues = np.concatenate(raw_trues_tot)
+            ap_correct = average_precision_score(all_trues, all_preds)
+            auc_correct = roc_auc_score(all_trues, all_preds)
+        else:
+            ap_correct = 0.0
+            auc_correct = 0.0
+
+        print(f"[{mode.upper()}] Global AP: {ap_correct:.4f} AUC: {auc_correct:.4f}")
+        
+        # 这里你可以选择返回哪一个，通常建议返回正确的，或者两者都返回供记录
+        return ap_correct, auc_correct
     best_ap = 0
     best_e = 0
     tap = 0
@@ -439,97 +625,98 @@ else:
         if mailbox is not None:
             mailbox.reset()
         # training
-        train_param['batch_size'] = orig_batch_size
-        itr_tot = train_edge_end // train_param['batch_size'] // args.num_gpus * args.num_gpus
-        train_param['batch_size'] = math.ceil(train_edge_end / itr_tot)
+        # train_param['batch_size'] = orig_batch_size
+        # itr_tot = train_edge_end // train_param['batch_size'] // args.num_gpus * args.num_gpus
+        # train_param['batch_size'] = math.ceil(train_edge_end / itr_tot)
+        
         multi_mfgs = list()
         multi_root = list()
         multi_ts = list()
         multi_eid = list()
         multi_block = list()
         group_indexes = list()
-        group_indexes.append(np.array(df[:train_edge_end].index // train_param['batch_size']))
-        if 'reorder' in train_param:
-            # random chunk shceduling
-            reorder = train_param['reorder']
-            group_idx = list()
-            for i in range(reorder):
-                group_idx += list(range(0 - i, reorder - i))
-            group_idx = np.repeat(np.array(group_idx), train_param['batch_size'] // reorder)
-            group_idx = np.tile(group_idx, train_edge_end // train_param['batch_size'] + 1)[:train_edge_end]
-            group_indexes.append(group_indexes[0] + group_idx)
-            base_idx = group_indexes[0]
-            for i in range(1, train_param['reorder']):
-                additional_idx = np.zeros(train_param['batch_size'] // train_param['reorder'] * i) - 1
-                group_indexes.append(np.concatenate([additional_idx, base_idx])[:base_idx.shape[0]])
-        with tqdm(total=itr_tot + max((val_edge_end - train_edge_end) // train_param['batch_size'] // args.num_gpus, 1) * args.num_gpus) as pbar:
-            for _, rows in df[:train_edge_end].groupby(group_indexes[random.randint(0, len(group_indexes) - 1)]):
-                t_tot_s = time.time()
-                root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-                ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
-                if sampler is not None:
-                    if 'no_neg' in sample_param and sample_param['no_neg']:
-                        pos_root_end = root_nodes.shape[0] * 2 // 3
-                        sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
-                    else:
-                        sampler.sample(root_nodes, ts)
-                    ret = sampler.get_ret()
-                    time_sample += ret[0].sample_time()
-                if gnn_param['arch'] != 'identity':
-                    mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
+        
+        train_df = df[:train_edge_end]
+        
+        
+        df2, pad_rows, n_mini = pad_df_to_gpu_multiple(train_df, train_param['batch_size'], args.num_gpus)
+        grouped_df = make_groups(df2, train_param['batch_size'])
+        assert grouped_df.ngroups == n_mini
+        assert n_mini % args.num_gpus == 0
+
+     
+
+        for _, rows in tqdm(
+                grouped_df,
+                total=n_mini,
+                desc="Train batching",
+            ):
+            t_tot_s = time.time()
+            root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
+            ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+            if sampler is not None:
+                if 'no_neg' in sample_param and sample_param['no_neg']:
+                    pos_root_end = root_nodes.shape[0] * 2 // 3
+                    sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
                 else:
-                    mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
-                multi_mfgs.append(mfgs)
-                multi_root.append(root_nodes)
-                multi_ts.append(ts)
-                multi_eid.append(rows['Unnamed: 0'].values)
-                if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
-                    multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
-                if len(multi_mfgs) == args.num_gpus:
-                    model_state = [0] * (args.num_gpus + 1)
-                    my_model_state = [None]
-                    torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
-                    multi_mfgs.append(None)
-                    my_mfgs = [None]
-                    torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
-                    if mailbox is not None:
-                        multi_root.append(None)
-                        multi_ts.append(None)
-                        multi_eid.append(None)
-                        my_root = [None]
-                        my_ts = [None]
-                        my_eid = [None]
-                        torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
-                        torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
-                        torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
-                        if memory_param['deliver_to'] == 'neighbors':
-                            multi_block.append(None)
-                            my_block = [None]
-                            torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
-                    multi_mfgs = list()
-                    multi_root = list()
-                    multi_ts = list()
-                    multi_eid = list()
-                    multi_block = list()
-                pbar.update(1)
-                time_tot += time.time() - t_tot_s
-            print('Training time:',time_tot)
-            model_state = [5] * (args.num_gpus + 1)
-            my_model_state = [None]
-            torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
-            gathered_loss = [None] * (args.num_gpus + 1)
-            torch.distributed.gather_object(float(0), gathered_loss, dst=args.num_gpus)
-            total_loss = np.sum(np.array(gathered_loss) * train_param['batch_size'])
-            ap, auc = eval('val')
-            if ap > best_ap:
-                best_e = e
-                best_ap = ap
-                model_state = [4] * (args.num_gpus + 1)
-                model_state[0] = 2
+                    sampler.sample(root_nodes, ts)
+                ret = sampler.get_ret()
+                time_sample += ret[0].sample_time()
+            if gnn_param['arch'] != 'identity':
+                mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
+            else:
+                mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
+            multi_mfgs.append(mfgs)
+            multi_root.append(root_nodes)
+            multi_ts.append(ts)
+            multi_eid.append(rows['Unnamed: 0'].values)
+            if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
+                multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
+            if len(multi_mfgs) == args.num_gpus:
+                model_state = [0] * (args.num_gpus + 1)
                 my_model_state = [None]
                 torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
-                # for memory based models, testing after validation is faster
-                tap, tauc = eval('test')
+                multi_mfgs.append(None)
+                my_mfgs = [None]
+                torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
+                if mailbox is not None:
+                    multi_root.append(None)
+                    multi_ts.append(None)
+                    multi_eid.append(None)
+                    my_root = [None]
+                    my_ts = [None]
+                    my_eid = [None]
+                    torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
+                    torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
+                    torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
+                    if memory_param['deliver_to'] == 'neighbors':
+                        multi_block.append(None)
+                        my_block = [None]
+                        torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
+                multi_mfgs = list()
+                multi_root = list()
+                multi_ts = list()
+                multi_eid = list()
+                multi_block = list()
+            time_tot += time.time() - t_tot_s
+        model_state = [5] * (args.num_gpus + 1)
+        my_model_state = [None]
+        torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
+        gathered_loss = [None] * (args.num_gpus + 1)
+        torch.distributed.gather_object(float(0), gathered_loss, dst=args.num_gpus)
+        total_loss = np.sum(np.array(gathered_loss) * train_param['batch_size'])
+        ap, auc = eval('val')
+        model_state = [4] * (args.num_gpus + 1)
+        model_state[0] = 2
+        my_model_state = [None]
+        torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
+            # for memory based models, testing after validation is faster
+        tap_, tauc_ = eval('test')
+        if ap > best_ap:
+            best_e = e
+            best_ap = ap
+            tap = tap_
+            tauc = tauc_
         print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}'.format(total_loss, ap, auc))
         print('\ttotal time:{:.2f}s sample time:{:.2f}s'.format(time_tot, time_sample))
 
@@ -540,3 +727,6 @@ else:
     model_state = [-1] * (args.num_gpus + 1)
     my_model_state = [None]
     torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
+    end = time.time()
+    print(f"Elapsed time: {end - start_time:.2f} seconds")
+

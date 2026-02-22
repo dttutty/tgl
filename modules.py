@@ -51,6 +51,16 @@ class GeneralModel(torch.nn.Module):
         out = list()
         for l in range(self.gnn_param['layer']):
             for h in range(self.sample_param['history']):
+                # print("Block srcdata detail:")
+                # print("mfgs[l][h]: ", mfgs[l][h])
+                # for k, v in mfgs[l][h].srcdata.items():
+                #     if isinstance(v, torch.Tensor):
+                #         print(
+                #             f"{k:12s} | dtype={v.dtype} | shape={tuple(v.shape)} | device={v.device} | requires_grad={v.requires_grad}"
+                #         )
+                #     else:
+                #         print(f"{k:12s} | type={type(v)}")
+
                 rst = self.layers['l' + str(l) + 'h' + str(h)](mfgs[l][h])
                 if 'time_transform' in self.gnn_param and self.gnn_param['time_transform'] == 'JODIE':
                     rst = self.layers['l0h' + str(h) + 't'](rst, mfgs[l][h].srcdata['mem_ts'], mfgs[l][h].srcdata['ts'])

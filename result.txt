@@ -1,0 +1,8 @@
+82%|████████████████████████████████████████████████████████████████████████████████████████████████████▋                     | 226/274 [00:13<00:03, 14.02it/s]Training time: 13.834765911102295
+325it [00:22, 14.66it/s]                                                                                                                                         
+        train loss:803342.5329  val ap:0.778148  val auc:0.809577
+        total time:13.83s sample time:0.05s
+Best model at epoch 9.
+        test ap:0.807688  test auc:0.826678
+Elapsed time: 207.73 seconds
+(simple_py310) sqp17@markov:~/Projects/orginal_tgl/original_tgl$ 

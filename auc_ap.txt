@@ -1,0 +1,38 @@
+Epoch 9:
+Train batching: 100%|████████████████████████████████████████████████████████████████████████████| 226/226 [00:06<00:00, 32.79it/s]
+[Rank 1] Finished Epoch 9, steps: 112
+Eval batching:   0%|                                                                                        | 0/48 [00:00<?, ?it/s][Rank 0] Finished Epoch 9, steps: 112
+Eval batching: 49it [00:02, 19.42it/s]                                                                                             
+[VAL] Local-Avg(Wrong) AP: 0.7890 AUC: 0.8189 | Global(Correct) AP: 0.7864 AUC: 0.8166
+Eval batching: 49it [00:02, 17.63it/s]                                                                                             
+[TEST] Local-Avg(Wrong) AP: 0.8231 AUC: 0.8428 | Global(Correct) AP: 0.8318 AUC: 0.8472
+        train loss:794713.9735  val ap:0.786425  val auc:0.816591
+        (inaccurate) val ap:0.789026  val auc:0.818857
+        total time:6.82s sample time:0.05s
+Best model at epoch 9.
+        test ap:0.831792  test auc:0.847246
+        (inaccurate) test ap:0.823119  test auc:0.842756
+Elapsed time: 123.72 seconds
+[rank 0] minibatch start->start (GPU stream): n=1120 avg=61.246ms p50=59.490ms p90=74.577ms p99=88.576ms
+[rank 0] minibatch start->start (wall): n=1120 avg=61.245ms p50=59.490ms p90=74.580ms p99=88.578ms
+[rank 1] minibatch start->start (GPU stream): n=1120 avg=61.245ms p50=59.488ms p90=74.866ms p99=88.017ms
+[rank 1] minibatch start->start (wall): n=1120 avg=61.245ms p50=59.488ms p90=74.856ms p99=88.018ms
+
+
+128
+
+Eval batching: 49it [00:02, 17.77it/s]                                                                                             
+[VAL] Local-Avg(Wrong) AP: 0.7813 AUC: 0.8135 | Global(Correct) AP: 0.7791 AUC: 0.8114
+Eval batching: 49it [00:02, 17.97it/s]                                                                                             
+[TEST] Local-Avg(Wrong) AP: 0.8106 AUC: 0.8293 | Global(Correct) AP: 0.8142 AUC: 0.8287
+        train loss:791463.1753  val ap:0.779147  val auc:0.811434
+        (inaccurate) val ap:0.781280  val auc:0.813472
+        total time:7.42s sample time:0.09s
+Best model at epoch 9.
+        test ap:0.814155  test auc:0.828686
+        (inaccurate) test ap:0.810607  test auc:0.829280
+Elapsed time: 295.45 seconds
+[rank 1] minibatch start->start (GPU stream): n=1120 avg=146.083ms p50=134.999ms p90=242.975ms p99=304.981ms
+[rank 1] minibatch start->start (wall): n=1120 avg=146.084ms p50=134.999ms p90=242.976ms p99=304.982ms
+[rank 0] minibatch start->start (GPU stream): n=1120 avg=146.140ms p50=132.844ms p90=242.852ms p99=308.424ms
+[rank 0] minibatch start->start (wall): n=1120 avg=146.141ms p50=132.845ms p90=242.862ms p99=308.424ms

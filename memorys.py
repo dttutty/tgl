@@ -175,6 +175,11 @@ class GRUMemeoryUpdater(torch.nn.Module):
         self.last_updated_nid = None
         if dim_time > 0:
             self.time_enc = TimeEncode(dim_time)
+            
+            
+
+        print(f"dim_time: {dim_time}, dim_memory: {dim_hid}")
+        print(f"dim_node_feat: {dim_node_feat}")
         if memory_param['combine_node_feature']:
             if dim_node_feat > 0 and dim_node_feat != dim_hid:
                 self.node_feat_map = torch.nn.Linear(dim_node_feat, dim_hid)
@@ -211,6 +216,7 @@ class RNNMemeoryUpdater(torch.nn.Module):
         self.last_updated_nid = None
         if dim_time > 0:
             self.time_enc = TimeEncode(dim_time)
+            
         if memory_param['combine_node_feature']:
             if dim_node_feat > 0 and dim_node_feat != dim_hid:
                 self.node_feat_map = torch.nn.Linear(dim_node_feat, dim_hid)

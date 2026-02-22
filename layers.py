@@ -2,6 +2,13 @@ import torch
 import dgl
 import math
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import dgl
+import dgl.function as fn
+# ... existing imports ...
+
 
 class TimeEncode(torch.nn.Module):
 
@@ -37,7 +44,7 @@ class EdgePredictor(torch.nn.Module):
 
 class TransfomerAttentionLayer(torch.nn.Module):
 
-    def __init__(self, dim_node_feat, dim_edge_feat, dim_time, num_head, dropout, att_dropout, dim_out, combined=False):
+    def __init__(self, dim_node_feat, dim_edge_feat, dim_time, num_head, dropout, att_dropout, dim_out, combined=False, ffn_expansion: int = 4):
         super(TransfomerAttentionLayer, self).__init__()
         self.num_head = num_head
         self.dim_node_feat = dim_node_feat
@@ -69,6 +76,85 @@ class TransfomerAttentionLayer(torch.nn.Module):
             self.w_v = torch.nn.Linear(dim_node_feat + dim_edge_feat + dim_time, dim_out)
         self.w_out = torch.nn.Linear(dim_node_feat + dim_out, dim_out)
         self.layer_norm = torch.nn.LayerNorm(dim_out)
+        # self.ffn0 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+        # self.ffn1 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+        # self.ffn2 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+        # self.ffn3 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+        # self.ffn4 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+        # self.ffn5 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+        # self.ffn6 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+        # self.ffn7 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+        # self.ffn8 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+        # self.ffn9 = nn.Sequential(
+        #     nn.Linear(dim_out, dim_out * ffn_expansion),
+        #     nn.GELU(),
+        #     nn.Dropout(dropout),
+        #     nn.Linear(dim_out * ffn_expansion, dim_out),
+        #     nn.Dropout(dropout),
+        # )
+
+
 
     def forward(self, b):
         assert(self.dim_time + self.dim_node_feat + self.dim_edge_feat > 0)
@@ -99,7 +185,7 @@ class TransfomerAttentionLayer(torch.nn.Module):
             att = self.att_dropout(att)
             V = torch.reshape(V*att[:, :, None], (V.shape[0], -1))
             b.edata['v'] = V
-            b.update_all(dgl.function.copy_edge('v', 'm'), dgl.function.sum('m', 'h'))
+            b.update_all(dgl.function.copy_e('v', 'm'), dgl.function.sum('m', 'h'))
         else:
             if self.dim_time == 0 and self.dim_node_feat == 0:
                 Q = torch.ones((b.num_edges(), self.dim_out), device=torch.device('cuda:0'))
@@ -132,14 +218,26 @@ class TransfomerAttentionLayer(torch.nn.Module):
             att = self.att_dropout(att)
             V = torch.reshape(V*att[:, :, None], (V.shape[0], -1))
             b.srcdata['v'] = torch.cat([torch.zeros((b.num_dst_nodes(), V.shape[1]), device=torch.device('cuda:0')), V], dim=0)
-            b.update_all(dgl.function.copy_src('v', 'm'), dgl.function.sum('m', 'h'))
+            b.update_all(dgl.function.copy_u('v', 'm'), dgl.function.sum('m', 'h'))
         if self.dim_node_feat != 0:
             rst = torch.cat([b.dstdata['h'], b.srcdata['h'][:b.num_dst_nodes()]], dim=1)
         else:
             rst = b.dstdata['h']
         rst = self.w_out(rst)
         rst = torch.nn.functional.relu(self.dropout(rst))
-        return self.layer_norm(rst)
+        out =self.layer_norm(rst)
+        # out = self.ffn0(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn1(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn2(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn3(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn4(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn5(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn6(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn7(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn8(out) + out  # Transformer-style FFN with residual connection
+        # out = self.ffn9(out) + out  # Transformer-style FFN with residual connection
+
+        return out
 
 class IdentityNormLayer(torch.nn.Module):
 

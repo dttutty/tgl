@@ -6,7 +6,7 @@ import time
 import pandas as pd
 import numpy as np
 
-def load_feat(d, rand_de=0, rand_dn=0):
+def load_feat(d, rand_de, rand_dn):
     node_feats = None
     if os.path.exists('DATA/{}/node_features.pt'.format(d)):
         node_feats = torch.load('DATA/{}/node_features.pt'.format(d))
@@ -26,7 +26,9 @@ def load_feat(d, rand_de=0, rand_dn=0):
         if d == 'LASTFM':
             node_feats = torch.randn(1980, rand_dn)
         elif d == 'MOOC':
-            edge_feats = torch.randn(7144, rand_dn)
+            node_feats = torch.randn(7144, rand_dn)
+    # print("Node features shape:", None if node_feats is None else node_feats.shape)
+    # print("Edge features shape:", None if edge_feats is None else edge_feats.shape)
     return node_feats, edge_feats
 
 def load_graph(d):
@@ -82,6 +84,8 @@ def mfgs_to_cuda(mfgs):
     return mfgs
 
 def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=False, nfeat_buffs=None, efeat_buffs=None, nids=None, eids=None):
+    if node_feats is None:
+        print("Warning: node_feats is None! 'h' will not be assigned.")
     if combine_first:
         for i in range(len(mfgs[0])):
             if mfgs[0][i].num_src_nodes() > mfgs[0][i].num_dst_nodes():
@@ -115,22 +119,54 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
             else:
                 srch = node_feats[b.srcdata['ID'].long()].float()
                 b.srcdata['h'] = srch.cuda()
+    # i = 0
+    # if edge_feats is not None:
+    #     for mfg in mfgs:
+    #         for b in mfg:
+    #             if b.num_src_nodes() > b.num_dst_nodes():
+    #                 if pinned:
+    #                     if eids is not None:
+    #                         idx = eids[i]
+    #                     else:
+    #                         idx = b.edata['ID'].cpu().long()
+    #                     torch.index_select(edge_feats, 0, idx, out=efeat_buffs[i][:idx.shape[0]])
+    #                     b.edata['f'] = efeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
+    #                     i += 1
+    #                 else:
+    #                     srch = edge_feats[b.edata['ID'].long()].float()
+    #                     b.edata['f'] = srch.cuda()
+    
     i = 0
     if edge_feats is not None:
         for mfg in mfgs:
             for b in mfg:
-                if b.num_src_nodes() > b.num_dst_nodes():
-                    if pinned:
-                        if eids is not None:
-                            idx = eids[i]
-                        else:
-                            idx = b.edata['ID'].cpu().long()
+                # 1. 移除 if b.num_src_nodes() > b.num_dst_nodes(): 限制
+                # 这样可以确保 i 与 eids 列表一一对应
+                if pinned:
+                    if eids is not None:
+                        idx = eids[i]
+                    else:
+                        idx = b.edata['ID'].cpu().long()
+                    
+                    # 2. 增加安全性检查：如果 Block 没有边，就跳过赋值
+                    if b.num_edges() > 0:
                         torch.index_select(edge_feats, 0, idx, out=efeat_buffs[i][:idx.shape[0]])
                         b.edata['f'] = efeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
-                        i += 1
-                    else:
+                    
+                    i += 1
+                else:
+                    # 非 pinned 模式
+                    if b.num_edges() > 0:
                         srch = edge_feats[b.edata['ID'].long()].float()
                         b.edata['f'] = srch.cuda()
+            
+    if node_feats is not None:
+    # 检查第一层第一个块是否有 'h'
+        if 'h' not in mfgs[0][0].srcdata:
+            print("Error: 'h' key missing in mfgs[0][0].srcdata")
+        else:
+            pass
+            # print(f"Success: 'h' shape is {mfgs[0][0].srcdata['h'].shape}")
     return mfgs
 
 def get_ids(mfgs, node_feats, edge_feats):
