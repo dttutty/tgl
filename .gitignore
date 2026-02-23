@@ -52,4 +52,5 @@ traces/
 distributed_trace.json
 *.so
 slurm_script/
+slurm/
 logs_*
