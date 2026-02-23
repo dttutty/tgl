@@ -44,6 +44,7 @@ from modules import *
 from sampler import *
 from utils import *
 from df_split import make_balance_plan
+from shm_naming import init_run_id, build_shm_namer
 import torch.distributed as dist # 确保已有或添加
 from torch.profiler import profile, record_function, ProfilerActivity # 新增
 
@@ -55,6 +56,9 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 torch.distributed.init_process_group(backend='gloo', timeout=datetime.timedelta(0, 3600))
+
+run_id = init_run_id(args.local_rank, src_rank=0)
+shm_name = build_shm_namer(run_id)
 
 nccl_group = None
 # if args.local_rank < args.num_gpus:
@@ -69,7 +73,7 @@ if args.local_rank == 0:
         dim_feats[0] = _node_feats.shape[0]
         dim_feats[1] = _node_feats.shape[1]
         dim_feats[2] = _node_feats.dtype
-        node_feats = create_shared_mem_array('node_feats', _node_feats.shape, dtype=_node_feats.dtype)
+        node_feats = create_shared_mem_array(shm_name('node_feats'), _node_feats.shape, dtype=_node_feats.dtype)
         node_feats.copy_(_node_feats)
         del _node_feats
     else:
@@ -78,7 +82,7 @@ if args.local_rank == 0:
         dim_feats[3] = _edge_feats.shape[0]
         dim_feats[4] = _edge_feats.shape[1]
         dim_feats[5] = _edge_feats.dtype
-        edge_feats = create_shared_mem_array('edge_feats', _edge_feats.shape, dtype=_edge_feats.dtype)
+        edge_feats = create_shared_mem_array(shm_name('edge_feats'), _edge_feats.shape, dtype=_edge_feats.dtype)
         edge_feats.copy_(_edge_feats)
         del _edge_feats
     else: 
@@ -89,9 +93,9 @@ if args.local_rank > 0 and args.local_rank < args.num_gpus:
     node_feats = None
     edge_feats = None
     if dim_feats[0] > 0:
-        node_feats = get_shared_mem_array('node_feats', (dim_feats[0], dim_feats[1]), dtype=dim_feats[2])
+        node_feats = get_shared_mem_array(shm_name('node_feats'), (dim_feats[0], dim_feats[1]), dtype=dim_feats[2])
     if dim_feats[3] > 0:
-        edge_feats = get_shared_mem_array('edge_feats', (dim_feats[3], dim_feats[4]), dtype=dim_feats[5])
+        edge_feats = get_shared_mem_array(shm_name('edge_feats'), (dim_feats[3], dim_feats[4]), dtype=dim_feats[5])
 sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
 orig_batch_size = train_param['batch_size']
 if args.local_rank == 0:
@@ -115,12 +119,12 @@ num_nodes = num_nodes[0]
 mailbox = None
 if memory_param['type'] != 'none':
     if args.local_rank == 0:
-        node_memory = create_shared_mem_array('node_memory', torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
-        node_memory_ts = create_shared_mem_array('node_memory_ts', torch.Size([num_nodes]), dtype=torch.float32)
-        mails = create_shared_mem_array('mails', torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = create_shared_mem_array('mails_ts', torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
-        next_mail_pos = create_shared_mem_array('next_mail_pos', torch.Size([num_nodes]), dtype=torch.long)
-        update_mail_pos = create_shared_mem_array('update_mail_pos', torch.Size([num_nodes]), dtype=torch.int32)
+        node_memory = create_shared_mem_array(shm_name('node_memory'), torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
+        node_memory_ts = create_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.float32)
+        mails = create_shared_mem_array(shm_name('mails'), torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
+        mail_ts = create_shared_mem_array(shm_name('mails_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        next_mail_pos = create_shared_mem_array(shm_name('next_mail_pos'), torch.Size([num_nodes]), dtype=torch.long)
+        update_mail_pos = create_shared_mem_array(shm_name('update_mail_pos'), torch.Size([num_nodes]), dtype=torch.int32)
         torch.distributed.barrier()
         node_memory.zero_()
         node_memory_ts.zero_()
@@ -130,12 +134,12 @@ if memory_param['type'] != 'none':
         update_mail_pos.zero_()
     else:
         torch.distributed.barrier()
-        node_memory = get_shared_mem_array('node_memory', torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
-        node_memory_ts = get_shared_mem_array('node_memory_ts', torch.Size([num_nodes]), dtype=torch.float32)
-        mails = get_shared_mem_array('mails', torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = get_shared_mem_array('mails_ts', torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
-        next_mail_pos = get_shared_mem_array('next_mail_pos', torch.Size([num_nodes]), dtype=torch.long)
-        update_mail_pos = get_shared_mem_array('update_mail_pos', torch.Size([num_nodes]), dtype=torch.int32)
+        node_memory = get_shared_mem_array(shm_name('node_memory'), torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
+        node_memory_ts = get_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.float32)
+        mails = get_shared_mem_array(shm_name('mails'), torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
+        mail_ts = get_shared_mem_array(shm_name('mails_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        next_mail_pos = get_shared_mem_array(shm_name('next_mail_pos'), torch.Size([num_nodes]), dtype=torch.long)
+        update_mail_pos = get_shared_mem_array(shm_name('update_mail_pos'), torch.Size([num_nodes]), dtype=torch.int32)
     mailbox = MailBox(memory_param, num_nodes, dim_feats[4], node_memory, node_memory_ts, mails, mail_ts, next_mail_pos, update_mail_pos)
 
 class DataPipelineThread(threading.Thread):
