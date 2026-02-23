@@ -19,12 +19,22 @@ parser.add_argument(
     "--rnd_ndim", type=int, default=128
 )  # if your dataset has no node features, set rnd_ndim > 0 to use random node features
 args=parser.parse_args()
+args.local_rank = 0
 if 'LOCAL_RANK' in os.environ:
     args.local_rank = int(os.environ['LOCAL_RANK'])
 
-# set which GPU to use
+# assign GPUs from externally provided CUDA_VISIBLE_DEVICES
+visible_devices_raw = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+visible_devices = [d.strip() for d in visible_devices_raw.split(',') if d.strip() != '']
+
+if args.num_gpus > 0 and len(visible_devices) < args.num_gpus:
+    raise RuntimeError(
+        f"Not enough CUDA devices in CUDA_VISIBLE_DEVICES='{visible_devices_raw}'. "
+        f"Need at least {args.num_gpus}, but got {len(visible_devices)}."
+    )
+
 if args.local_rank < args.num_gpus:
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.local_rank)
+    os.environ['CUDA_VISIBLE_DEVICES'] = visible_devices[args.local_rank]
 else:
     os.environ['CUDA_VISIBLE_DEVICES'] = ''
 os.environ['OMP_NUM_THREADS'] = str(args.omp_num_threads)
@@ -195,6 +205,7 @@ class DataPipelineThread(threading.Thread):
 start_time = time.time()
 
 if args.local_rank < args.num_gpus:
+    torch.cuda.set_device(0)
     # GPU worker process
     model = GeneralModel(dim_feats[1], dim_feats[4], sample_param, memory_param, gnn_param, train_param).cuda()
     
@@ -208,7 +219,7 @@ if args.local_rank < args.num_gpus:
     total_params, trainable_params = count_parameters(model)
     print(f"[Rank {args.local_rank}] Model parameters: total={total_params} trainable={trainable_params}")
     find_unused_parameters = True if sample_param['history'] > 1 else False
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], process_group=nccl_group, output_device=args.local_rank, find_unused_parameters=find_unused_parameters)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[0], process_group=nccl_group, output_device=0, find_unused_parameters=find_unused_parameters)
     creterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
     pinned_nfeat_buffs, pinned_efeat_buffs = get_pinned_buffers(sample_param, train_param['batch_size'], node_feats, edge_feats)
