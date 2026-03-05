@@ -15,7 +15,7 @@ memory:
     memory_update: 'gru'
     mailbox_size: 1
     combine_node_feature: True
-    dim_out: 512
+    dim_out: 128
 gnn:
   - arch: 'transformer_attention'
     layer: 1
@@ -24,7 +24,7 @@ gnn:
     dim_out: 128
 
 train:
-  - epoch: 20
+  - epoch: 10
     batch_size: 4000 # local batch_size
     lr: 0.0001
     dropout: 0.2

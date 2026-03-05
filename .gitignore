@@ -54,3 +54,4 @@ distributed_trace.json
 slurm_script/
 slurm/
 logs_*
+hydralance/
