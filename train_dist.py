@@ -654,8 +654,6 @@ else:
         multi_ts = list()
         multi_eid = list()
         multi_block = list()
-        group_indexes = list()
-        
         train_df = df[:train_edge_end]
         
         

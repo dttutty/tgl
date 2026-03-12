@@ -57,14 +57,6 @@ if not os.path.isfile('embs/' + emb_file_name):
     mailbox = MailBox(memory_param, g['indptr'].shape[0] - 1, gnn_dim_edge) if memory_param['type'] != 'none' else None
     creterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
-    if 'all_on_gpu' in train_param and train_param['all_on_gpu']:
-        if node_feats is not None:
-            node_feats = node_feats.cuda()
-        if edge_feats is not None:
-            edge_feats = edge_feats.cuda()
-        if mailbox is not None:
-            mailbox.move_to_gpu()
-
     sampler = None
     if not ('no_sample' in sample_param and sample_param['no_sample']):
         sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),

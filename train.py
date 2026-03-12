@@ -69,14 +69,6 @@ model = GeneralModel(gnn_dim_node, gnn_dim_edge, sample_param, memory_param, gnn
 mailbox = MailBox(memory_param, g['indptr'].shape[0] - 1, gnn_dim_edge) if memory_param['type'] != 'none' else None
 creterion = torch.nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
-if 'all_on_gpu' in train_param and train_param['all_on_gpu']:
-    if node_feats is not None:
-        node_feats = node_feats.cuda()
-    if edge_feats is not None:
-        edge_feats = edge_feats.cuda()
-    if mailbox is not None:
-        mailbox.move_to_gpu()
-
 sampler = None
 if not ('no_sample' in sample_param and sample_param['no_sample']):
     sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
@@ -159,21 +151,6 @@ else:
 best_ap = 0
 best_e = 0
 val_losses = list()
-group_indexes = list()
-group_indexes.append(np.array(df[:train_edge_end].index // train_param['batch_size']))
-if 'reorder' in train_param:
-    # random chunk shceduling
-    reorder = train_param['reorder']
-    group_idx = list()
-    for i in range(reorder):
-        group_idx += list(range(0 - i, reorder - i))
-    group_idx = np.repeat(np.array(group_idx), train_param['batch_size'] // reorder)
-    group_idx = np.tile(group_idx, train_edge_end // train_param['batch_size'] + 1)[:train_edge_end]
-    group_indexes.append(group_indexes[0] + group_idx)
-    base_idx = group_indexes[0]
-    for i in range(1, train_param['reorder']):
-        additional_idx = np.zeros(train_param['batch_size'] // train_param['reorder'] * i) - 1
-        group_indexes.append(np.concatenate([additional_idx, base_idx])[:base_idx.shape[0]])
 for e in range(train_param['epoch']):
     print('Epoch {:d}:'.format(e))
     time_sample = 0
@@ -187,7 +164,7 @@ for e in range(train_param['epoch']):
     if mailbox is not None:
         mailbox.reset()
         model.memory_updater.last_updated_nid = None
-    for _, rows in df[:train_edge_end].groupby(group_indexes[random.randint(0, len(group_indexes) - 1)]):
+    for _, rows in df[:train_edge_end].groupby(df[:train_edge_end].index // train_param['batch_size']):
         t_tot_s = time.time()
         root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
         ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)

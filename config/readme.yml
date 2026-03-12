@@ -24,8 +24,6 @@ gnn:
 train:
   - epoch: <an integer, number of epochs to train>
     batch_size: <an integer, the batch size (of edges); for multi-gpu training, this is the local batchsize>
-    reorder: <(optional) an integer that is divisible by batch size the specifies how many chunks per batch used in the random chunk scheduling>
     lr: <floating point, learning rate>
     dropout: <floating point, dropout>
     att_dropout: <floating point, dropout for attention>
-    all_on_gpu: <False or True that decides if the node/edge features and node memory are completely stored on GPU>
