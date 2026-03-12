@@ -94,8 +94,6 @@ def gather_feature_rows(feats, idx, target_device=None):
     return gathered
 
 def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=False, nfeat_buffs=None, efeat_buffs=None, nids=None, eids=None):
-    if node_feats is None:
-        print("Warning: node_feats is None! 'h' will not be assigned.")
     if combine_first:
         for i in range(len(mfgs[0])):
             if mfgs[0][i].num_src_nodes() > mfgs[0][i].num_dst_nodes():
@@ -168,13 +166,6 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                     if b.num_edges() > 0:
                         b.edata['f'] = gather_feature_rows(edge_feats, b.edata['ID'], b.device)
             
-    if node_feats is not None:
-    # 检查第一层第一个块是否有 'h'
-        if 'h' not in mfgs[0][0].srcdata:
-            print("Error: 'h' key missing in mfgs[0][0].srcdata")
-        else:
-            pass
-            # print(f"Success: 'h' shape is {mfgs[0][0].srcdata['h'].shape}")
     return mfgs
 
 def get_ids(mfgs, node_feats, edge_feats):
