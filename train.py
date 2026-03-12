@@ -30,6 +30,10 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def sync_cuda():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
 # set_seed(0)
 
 node_feats, edge_feats = load_feat(args.data, args.rand_edge_features, args.rand_node_features)
@@ -153,10 +157,14 @@ best_e = 0
 val_losses = list()
 for e in range(train_param['epoch']):
     print('Epoch {:d}:'.format(e))
-    time_sample = 0
-    time_prep = 0
-    time_tot = 0
-    total_loss = 0
+    time_sample = 0.0
+    time_fetch_feature = 0.0
+    time_fetch_memory = 0.0
+    time_forward = 0.0
+    time_backward = 0.0
+    time_memory_update = 0.0
+    time_tot = 0.0
+    total_loss = 0.0
     # training
     model.train()
     if sampler is not None:
@@ -169,31 +177,44 @@ for e in range(train_param['epoch']):
         root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
         ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
         if sampler is not None:
+            t_sample_s = time.perf_counter()
             if 'no_neg' in sample_param and sample_param['no_neg']:
                 pos_root_end = root_nodes.shape[0] * 2 // 3
                 sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
             else:
                 sampler.sample(root_nodes, ts)
             ret = sampler.get_ret()
-            time_sample += ret[0].sample_time()
-        t_prep_s = time.time()
+            time_sample += time.perf_counter() - t_sample_s
+        t_fetch_feature_s = time.perf_counter()
         if gnn_param['arch'] != 'identity':
             mfgs = to_dgl_blocks(ret, sample_param['history'])
         else:
             mfgs = node_to_dgl_blocks(root_nodes, ts)
         mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
+        sync_cuda()
+        time_fetch_feature += time.perf_counter() - t_fetch_feature_s
         if mailbox is not None:
+            t_fetch_memory_s = time.perf_counter()
             mailbox.prep_input_mails(mfgs[0])
-        time_prep += time.time() - t_prep_s
+            sync_cuda()
+            time_fetch_memory += time.perf_counter() - t_fetch_memory_s
         optimizer.zero_grad()
+        sync_cuda()
+        t_forward_s = time.perf_counter()
         pred_pos, pred_neg = model(mfgs)
+        sync_cuda()
+        time_forward += time.perf_counter() - t_forward_s
         loss = creterion(pred_pos, torch.ones_like(pred_pos))
         loss += creterion(pred_neg, torch.zeros_like(pred_neg))
         total_loss += float(loss) * train_param['batch_size']
+        sync_cuda()
+        t_backward_s = time.perf_counter()
         loss.backward()
         optimizer.step()
-        t_prep_s = time.time()
+        sync_cuda()
+        time_backward += time.perf_counter() - t_backward_s
         if mailbox is not None:
+            t_memory_update_s = time.perf_counter()
             eid = rows['Unnamed: 0'].values
             mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
             block = None
@@ -201,7 +222,8 @@ for e in range(train_param['epoch']):
                 block = to_dgl_blocks(ret, sample_param['history'], reverse=True)[0][0]
             mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block)
             mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts)
-        time_prep += time.time() - t_prep_s
+            sync_cuda()
+            time_memory_update += time.perf_counter() - t_memory_update_s
         time_tot += time.time() - t_tot_s
     ap, auc = eval('val')
     if e > 2 and ap > best_ap:
@@ -209,7 +231,15 @@ for e in range(train_param['epoch']):
         best_ap = ap
         torch.save(model.state_dict(), path_saver)
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}'.format(total_loss, ap, auc))
-    print('\ttotal time:{:.2f}s sample time:{:.2f}s prep time:{:.2f}s'.format(time_tot, time_sample, time_prep))
+    print('\ttotal time:{:.2f}s sample:{:.2f}s fetch feature:{:.2f}s fetch memory:{:.2f}s forward:{:.2f}s backward:{:.2f}s memory update:{:.2f}s'.format(
+        time_tot,
+        time_sample,
+        time_fetch_feature,
+        time_fetch_memory,
+        time_forward,
+        time_backward,
+        time_memory_update,
+    ))
 
 print('Loading model at epoch {}...'.format(best_e))
 model.load_state_dict(torch.load(path_saver))
