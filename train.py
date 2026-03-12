@@ -131,7 +131,7 @@ def eval(mode='val'):
                 aucs_mrrs.append(roc_auc_score(y_true, y_pred))
             if mailbox is not None:
                 eid = rows['Unnamed: 0'].values
-                mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
+                mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
                 block = None
                 if memory_param['deliver_to'] == 'neighbors':
                     block = to_dgl_blocks(ret, sample_param['history'], reverse=True)[0][0]
@@ -216,7 +216,7 @@ for e in range(train_param['epoch']):
         if mailbox is not None:
             t_memory_update_s = time.perf_counter()
             eid = rows['Unnamed: 0'].values
-            mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
+            mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
             block = None
             if memory_param['deliver_to'] == 'neighbors':
                 block = to_dgl_blocks(ret, sample_param['history'], reverse=True)[0][0]

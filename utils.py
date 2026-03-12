@@ -83,6 +83,16 @@ def mfgs_to_cuda(mfgs):
             mfg[i] = mfg[i].to('cuda:0')
     return mfgs
 
+def gather_feature_rows(feats, idx, target_device=None):
+    if not torch.is_tensor(idx):
+        idx = torch.as_tensor(idx, device=feats.device, dtype=torch.long)
+    else:
+        idx = idx.to(feats.device, dtype=torch.long)
+    gathered = torch.index_select(feats, 0, idx).float()
+    if target_device is not None and gathered.device != target_device:
+        gathered = gathered.to(target_device, non_blocking=True)
+    return gathered
+
 def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=False, nfeat_buffs=None, efeat_buffs=None, nids=None, eids=None):
     if node_feats is None:
         print("Warning: node_feats is None! 'h' will not be assigned.")
@@ -117,8 +127,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 b.srcdata['h'] = nfeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
                 i += 1
             else:
-                srch = node_feats[b.srcdata['ID'].long()].float()
-                b.srcdata['h'] = srch.cuda()
+                b.srcdata['h'] = gather_feature_rows(node_feats, b.srcdata['ID'], b.device)
     # i = 0
     # if edge_feats is not None:
     #     for mfg in mfgs:
@@ -157,8 +166,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
                 else:
                     # 非 pinned 模式
                     if b.num_edges() > 0:
-                        srch = edge_feats[b.edata['ID'].long()].float()
-                        b.edata['f'] = srch.cuda()
+                        b.edata['f'] = gather_feature_rows(edge_feats, b.edata['ID'], b.device)
             
     if node_feats is not None:
     # 检查第一层第一个块是否有 'h'

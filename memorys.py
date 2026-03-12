@@ -17,6 +17,13 @@ class MailBox():
         self.next_mail_pos = torch.zeros((num_nodes), dtype=torch.long) if _next_mail_pos is None else _next_mail_pos
         self.update_mail_pos = _update_mail_pos
         self.device = torch.device('cpu')
+
+    def _gather_rows(self, values, idx, target_device):
+        idx = idx.to(values.device, dtype=torch.long)
+        gathered = torch.index_select(values, 0, idx)
+        if gathered.device != target_device:
+            gathered = gathered.to(target_device, non_blocking=True)
+        return gathered
         
     def reset(self):
         self.node_memory.fill_(0)
@@ -61,10 +68,10 @@ class MailBox():
                 torch.index_select(self.mailbox_ts, 0, idx, out=self.pinned_mailbox_ts_buffs[i][:idx.shape[0]])
                 b.srcdata['mail_ts'] = self.pinned_mailbox_ts_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
             else:
-                b.srcdata['mem'] = self.node_memory[b.srcdata['ID'].long()].cuda()
-                b.srcdata['mem_ts'] = self.node_memory_ts[b.srcdata['ID'].long()].cuda()
-                b.srcdata['mem_input'] = self.mailbox[b.srcdata['ID'].long()].cuda().reshape(b.srcdata['ID'].shape[0], -1)
-                b.srcdata['mail_ts'] = self.mailbox_ts[b.srcdata['ID'].long()].cuda()
+                b.srcdata['mem'] = self._gather_rows(self.node_memory, b.srcdata['ID'], b.device)
+                b.srcdata['mem_ts'] = self._gather_rows(self.node_memory_ts, b.srcdata['ID'], b.device)
+                b.srcdata['mem_input'] = self._gather_rows(self.mailbox, b.srcdata['ID'], b.device).reshape(b.srcdata['ID'].shape[0], -1)
+                b.srcdata['mail_ts'] = self._gather_rows(self.mailbox_ts, b.srcdata['ID'], b.device)
 
     def update_memory(self, nid, memory, root_nodes, ts, neg_samples=1):
         if nid is None:
