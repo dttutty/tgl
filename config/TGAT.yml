@@ -1,8 +1,8 @@
 sampling:
   - layer: 2
     neighbor: 
-      - 8
-      - 8
+      - 10
+      - 10
     strategy: 'uniform'
     prop_time: False
     history: 1
@@ -18,7 +18,7 @@ gnn:
     dim_time: 128
     dim_out: 128
 train:
-  - epoch: 100
+  - epoch: 10
     batch_size: 4096
     lr: 0.0001
     dropout: 0.1
