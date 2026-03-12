@@ -55,3 +55,4 @@ slurm_script/
 slurm/
 logs_*
 hydralance/
+.mypy_cache/
