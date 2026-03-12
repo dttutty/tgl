@@ -88,6 +88,10 @@ if args.use_inductive:
 else:
     neg_link_sampler = NegLinkSampler(g['indptr'].shape[0] - 1)
 
+pinned_nfeat_buffs, pinned_efeat_buffs = get_pinned_buffers(sample_param, train_param['batch_size'], node_feats, edge_feats)
+if mailbox is not None:
+    mailbox.allocate_pinned_memory_buffers(sample_param, train_param['batch_size'])
+
 def eval(mode='val'):
     neg_samples = 1
     model.eval()
@@ -113,12 +117,14 @@ def eval(mode='val'):
                     sampler.sample(root_nodes, ts)
                 ret = sampler.get_ret()
             if gnn_param['arch'] != 'identity':
-                mfgs = to_dgl_blocks(ret, sample_param['history'])
+                mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
             else:
-                mfgs = node_to_dgl_blocks(root_nodes, ts)
-            mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
+                mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
+            nids, eids = get_ids(mfgs, node_feats, edge_feats)
+            mfgs = mfgs_to_cuda(mfgs)
+            prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first, pinned=True, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs, nids=nids, eids=eids)
             if mailbox is not None:
-                mailbox.prep_input_mails(mfgs[0])
+                mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=True)
             pred_pos, pred_neg = model(mfgs, neg_samples=neg_samples)
             total_loss += creterion(pred_pos, torch.ones_like(pred_pos))
             total_loss += creterion(pred_neg, torch.zeros_like(pred_neg))
@@ -187,15 +193,17 @@ for e in range(train_param['epoch']):
             time_sample += time.perf_counter() - t_sample_s
         t_fetch_feature_s = time.perf_counter()
         if gnn_param['arch'] != 'identity':
-            mfgs = to_dgl_blocks(ret, sample_param['history'])
+            mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
         else:
-            mfgs = node_to_dgl_blocks(root_nodes, ts)
-        mfgs = prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first)
+            mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
+        nids, eids = get_ids(mfgs, node_feats, edge_feats)
+        mfgs = mfgs_to_cuda(mfgs)
+        prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first, pinned=True, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs, nids=nids, eids=eids)
         sync_cuda()
         time_fetch_feature += time.perf_counter() - t_fetch_feature_s
         if mailbox is not None:
             t_fetch_memory_s = time.perf_counter()
-            mailbox.prep_input_mails(mfgs[0])
+            mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=True)
             sync_cuda()
             time_fetch_memory += time.perf_counter() - t_fetch_memory_s
         optimizer.zero_grad()
