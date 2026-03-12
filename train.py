@@ -10,6 +10,7 @@ parser.add_argument('--use_inductive', action='store_true')
 parser.add_argument('--rand_edge_features', type=int, default=0, help='use random edge featrues')
 parser.add_argument('--rand_node_features', type=int, default=0, help='use random node featrues')
 parser.add_argument('--eval_neg_samples', type=int, default=1, help='how many negative samples to use at inference. Note: this will change the metric of test set to AP+AUC to AP+MRR!')
+parser.add_argument('--pin_memory', action='store_true', default=False, help='use pinned memory buffers for faster CPU->GPU feature transfer')
 args=parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
@@ -88,9 +89,12 @@ if args.use_inductive:
 else:
     neg_link_sampler = NegLinkSampler(g['indptr'].shape[0] - 1)
 
-pinned_nfeat_buffs, pinned_efeat_buffs = get_pinned_buffers(sample_param, train_param['batch_size'], node_feats, edge_feats)
-if mailbox is not None:
-    mailbox.allocate_pinned_memory_buffers(sample_param, train_param['batch_size'])
+if args.pin_memory:
+    pinned_nfeat_buffs, pinned_efeat_buffs = get_pinned_buffers(sample_param, train_param['batch_size'], node_feats, edge_feats)
+    if mailbox is not None:
+        mailbox.allocate_pinned_memory_buffers(sample_param, train_param['batch_size'])
+else:
+    pinned_nfeat_buffs, pinned_efeat_buffs = None, None
 
 def eval(mode='val'):
     neg_samples = 1
@@ -120,11 +124,14 @@ def eval(mode='val'):
                 mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
             else:
                 mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
-            nids, eids = get_ids(mfgs, node_feats, edge_feats)
+            if args.pin_memory:
+                nids, eids = get_ids(mfgs, node_feats, edge_feats)
             mfgs = mfgs_to_cuda(mfgs)
-            prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first, pinned=True, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs, nids=nids, eids=eids)
+            prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first,
+                          pinned=args.pin_memory, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs,
+                          nids=nids if args.pin_memory else None, eids=eids if args.pin_memory else None)
             if mailbox is not None:
-                mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=True)
+                mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=args.pin_memory)
             pred_pos, pred_neg = model(mfgs, neg_samples=neg_samples)
             total_loss += creterion(pred_pos, torch.ones_like(pred_pos))
             total_loss += creterion(pred_neg, torch.zeros_like(pred_neg))
@@ -161,6 +168,13 @@ else:
 best_ap = 0
 best_e = 0
 val_losses = list()
+avg_time_sample = 0.0
+avg_time_fetch_feature = 0.0
+avg_time_fetch_memory = 0.0
+avg_time_forward = 0.0
+avg_time_backward = 0.0
+avg_time_memory_update = 0.0
+avg_time_tot = 0.0
 for e in range(train_param['epoch']):
     print('Epoch {:d}:'.format(e))
     time_sample = 0.0
@@ -196,14 +210,17 @@ for e in range(train_param['epoch']):
             mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
         else:
             mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
-        nids, eids = get_ids(mfgs, node_feats, edge_feats)
+        if args.pin_memory:
+            nids, eids = get_ids(mfgs, node_feats, edge_feats)
         mfgs = mfgs_to_cuda(mfgs)
-        prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first, pinned=True, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs, nids=nids, eids=eids)
+        prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first,
+                      pinned=args.pin_memory, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs,
+                      nids=nids if args.pin_memory else None, eids=eids if args.pin_memory else None)
         sync_cuda()
         time_fetch_feature += time.perf_counter() - t_fetch_feature_s
         if mailbox is not None:
             t_fetch_memory_s = time.perf_counter()
-            mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=True)
+            mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=args.pin_memory)
             sync_cuda()
             time_fetch_memory += time.perf_counter() - t_fetch_memory_s
         optimizer.zero_grad()
@@ -248,6 +265,25 @@ for e in range(train_param['epoch']):
         time_backward,
         time_memory_update,
     ))
+    avg_time_tot += time_tot
+    avg_time_sample += time_sample
+    avg_time_fetch_feature += time_fetch_feature
+    avg_time_fetch_memory += time_fetch_memory
+    avg_time_forward += time_forward
+    avg_time_backward += time_backward
+    avg_time_memory_update += time_memory_update
+
+n_epochs = train_param['epoch']
+print('\nAverage over {} epochs:'.format(n_epochs))
+print('\ttotal time:{:.2f}s sample:{:.2f}s fetch feature:{:.2f}s fetch memory:{:.2f}s forward:{:.2f}s backward:{:.2f}s memory update:{:.2f}s'.format(
+    avg_time_tot / n_epochs,
+    avg_time_sample / n_epochs,
+    avg_time_fetch_feature / n_epochs,
+    avg_time_fetch_memory / n_epochs,
+    avg_time_forward / n_epochs,
+    avg_time_backward / n_epochs,
+    avg_time_memory_update / n_epochs,
+))
 
 print('Loading model at epoch {}...'.format(best_e))
 model.load_state_dict(torch.load(path_saver))
