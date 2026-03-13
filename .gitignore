@@ -57,3 +57,4 @@ logs_*
 hydralance/
 .mypy_cache/
 *.log
+exp/benchmark_timing/tmp_configs/*
