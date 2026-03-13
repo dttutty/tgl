@@ -101,6 +101,9 @@ def main():
 
     mask = eligible_mask(edges_df, graph_type)
     eligible_edge_ids = np.flatnonzero(mask)
+    edge_src = np.asarray(edges_df["src"], dtype=np.int64)
+    edge_dst = np.asarray(edges_df["dst"], dtype=np.int64)
+    edge_ts = np.asarray(edges_df["time"], dtype=np.float64)
 
     with np.load(graph_path) as graph_data:
         indptr = graph_data["indptr"]
@@ -138,15 +141,15 @@ def main():
     )
 
     expected_forward = make_key_array(
-        edges_df.loc[mask, "src"].to_numpy(dtype=np.int64),
-        edges_df.loc[mask, "dst"].to_numpy(dtype=np.int64),
-        edges_df.loc[mask, "time"].to_numpy(dtype=np.float64),
+        edge_src[mask],
+        edge_dst[mask],
+        edge_ts[mask],
         eligible_edge_ids,
     )
     expected_reverse = make_key_array(
-        edges_df.loc[mask, "dst"].to_numpy(dtype=np.int64),
-        edges_df.loc[mask, "src"].to_numpy(dtype=np.int64),
-        edges_df.loc[mask, "time"].to_numpy(dtype=np.float64),
+        edge_dst[mask],
+        edge_src[mask],
+        edge_ts[mask],
         eligible_edge_ids,
     )
 
