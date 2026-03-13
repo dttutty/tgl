@@ -1,38 +1,8 @@
 # TGL: A General Framework for Temporal Graph Training on Billion-Scale Graphs
 
-## Overview
-
-This repo is the open-sourced code for our work *TGL: A General Framework for Temporal Graph Training on Billion-Scale Graphs*.
-
-## Requirements
-- python >= 3.6.13
-- pytorch >= 1.8.1
-- pandas >= 1.1.5
-- numpy >= 1.19.5
-- dgl >= 0.6.1
-- pyyaml >= 5.4.1
-- tqdm >= 4.61.0
-- pybind11 >= 2.6.2
-- g++ >= 7.5.0
-- openmp >= 201511
-
-Our temporal sampler is implemented using C++, please compile the sampler first with the following command
-> python setup.py build_ext --inplace
-
-## Dataset
-
-[2022/06/29] We noticed that we uploaded the wrong version of the GDELT dataset and have uploaded the correct version. Please re-download all the files in the GDELT folder. Sorry of any inconvenience created.
-
-The four datasets used in our paper are available to download from AWS S3 bucket using the `down.sh` script. The total download size is around 350GB.
-
-To use your own dataset, you need to put the following files in the folder `\DATA\\<NameOfYourDataset>\`
-
-1. `edges.csv`: The file that stores temporal edge informations. The csv should have the following columns with the header as `,src,dst,time,ext_roll` where each of the column refers to edge index (start with zero), source node index (start with zero), destination node index, time stamp, extrapolation roll (0 for training edges, 1 for validation edges, 2 for test edges). The CSV should be sorted by time ascendingly.
-2. `ext_full.npz`: The T-CSR representation of the temporal graph. We provide a script to generate this file from `edges.csv`. You can use the following command to use the script 
-    >python gen_graph.py --data \<NameOfYourDataset>
-3. `edge_features.pt` (optional): The torch tensor that stores the edge featrues row-wise with shape (num edges, dim edge features). *Note: at least one of `edge_features.pt` or `node_features.pt` should present.*
-4. `node_features.pt` (optional): The torch tensor that stores the node featrues row-wise with shape (num nodes, dim node features). *Note: at least one of `edge_features.pt` or `node_features.pt` should present.*
-5. `labels.csv` (optional): The file contains node labels for dynamic node classification task. The csv should have the following columns with the header as `,node,time,label,ext_roll` where each of the column refers to node label index (start with zero), node index (start with zero), time stamp, node label, extrapolation roll (0 for training node labels, 1 for validation node labels, 2 for test node labels). The CSV should be sorted by time ascendingly.
+This repo is based on https://github.com/amazon-science/tgl#.
+Please refer to https://github.com/amazon-science/tgl# for installation and usage.
+I use `benchmark_timing.sh` to measure the runtime of each stage, and `freshness.sh` to measure the importance of freshness.
 
 ## Configuration Files
 

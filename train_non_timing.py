@@ -36,10 +36,6 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def sync_cuda():
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-
 # set_seed(0)
 
 node_feats, edge_feats = load_feat(args.data, args.rand_edge_features, args.rand_node_features)
@@ -173,25 +169,11 @@ else:
 best_ap = 0
 best_e = 0
 val_losses = list()
-avg_time_sample = 0.0
-avg_time_fetch_feature = 0.0
-avg_time_fetch_memory = 0.0
-avg_time_forward = 0.0
-avg_time_backward = 0.0
-avg_time_memory_update = 0.0
-avg_time_tot = 0.0
 if mailbox is not None and args.memory_update_delay_batches > 0:
     print('Delayed memory update enabled: {} minibatch(es)'.format(args.memory_update_delay_batches))
 
 for e in range(train_param['epoch']):
     print('Epoch {:d}:'.format(e))
-    time_sample = 0.0
-    time_fetch_feature = 0.0
-    time_fetch_memory = 0.0
-    time_forward = 0.0
-    time_backward = 0.0
-    time_memory_update = 0.0
-    time_tot = 0.0
     total_loss = 0.0
     # training
     model.train()
@@ -211,19 +193,15 @@ for e in range(train_param['epoch']):
         mailbox.update_memory(task['nid'], task['memory'], task['root_nodes'], task['updated_ts'])
 
     for _, rows in df[:train_edge_end].groupby(df[:train_edge_end].index // train_param['batch_size']):
-        t_tot_s = time.time()
         root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
         ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
         if sampler is not None:
-            t_sample_s = time.perf_counter()
             if 'no_neg' in sample_param and sample_param['no_neg']:
                 pos_root_end = root_nodes.shape[0] * 2 // 3
                 sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
             else:
                 sampler.sample(root_nodes, ts)
             ret = sampler.get_ret()
-            time_sample += time.perf_counter() - t_sample_s
-        t_fetch_feature_s = time.perf_counter()
         if gnn_param['arch'] != 'identity':
             mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
         else:
@@ -234,30 +212,16 @@ for e in range(train_param['epoch']):
         prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first,
                       pinned=args.pin_memory, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs,
                       nids=nids if args.pin_memory else None, eids=eids if args.pin_memory else None)
-        sync_cuda()
-        time_fetch_feature += time.perf_counter() - t_fetch_feature_s
         if mailbox is not None:
-            t_fetch_memory_s = time.perf_counter()
             mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=args.pin_memory)
-            sync_cuda()
-            time_fetch_memory += time.perf_counter() - t_fetch_memory_s
         optimizer.zero_grad()
-        sync_cuda()
-        t_forward_s = time.perf_counter()
         pred_pos, pred_neg = model(mfgs)
-        sync_cuda()
-        time_forward += time.perf_counter() - t_forward_s
         loss = creterion(pred_pos, torch.ones_like(pred_pos))
         loss += creterion(pred_neg, torch.zeros_like(pred_neg))
         total_loss += float(loss) * train_param['batch_size']
-        sync_cuda()
-        t_backward_s = time.perf_counter()
         loss.backward()
         optimizer.step()
-        sync_cuda()
-        time_backward += time.perf_counter() - t_backward_s
         if mailbox is not None:
-            t_memory_update_s = time.perf_counter()
             eid = rows['Unnamed: 0'].values
             mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
             block = None
@@ -277,16 +241,9 @@ for e in range(train_param['epoch']):
             if len(memory_update_queue) > args.memory_update_delay_batches:
                 flush_memory_update(memory_update_queue.popleft())
 
-            sync_cuda()
-            time_memory_update += time.perf_counter() - t_memory_update_s
-        time_tot += time.time() - t_tot_s
-
     if mailbox is not None and len(memory_update_queue) > 0:
-        t_memory_update_s = time.perf_counter()
         while len(memory_update_queue) > 0:
             flush_memory_update(memory_update_queue.popleft())
-        sync_cuda()
-        time_memory_update += time.perf_counter() - t_memory_update_s
 
     ap, auc = eval('val')
     if e > 2 and ap > best_ap:
@@ -294,34 +251,6 @@ for e in range(train_param['epoch']):
         best_ap = ap
         torch.save(model.state_dict(), path_saver)
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}'.format(total_loss, ap, auc))
-    print('\ttotal time:{:.2f}s sample:{:.2f}s fetch feature:{:.2f}s fetch memory:{:.2f}s forward:{:.2f}s backward:{:.2f}s memory update:{:.2f}s'.format(
-        time_tot,
-        time_sample,
-        time_fetch_feature,
-        time_fetch_memory,
-        time_forward,
-        time_backward,
-        time_memory_update,
-    ))
-    avg_time_tot += time_tot
-    avg_time_sample += time_sample
-    avg_time_fetch_feature += time_fetch_feature
-    avg_time_fetch_memory += time_fetch_memory
-    avg_time_forward += time_forward
-    avg_time_backward += time_backward
-    avg_time_memory_update += time_memory_update
-
-n_epochs = train_param['epoch']
-print('\nAverage over {} epochs:'.format(n_epochs))
-print('\ttotal time:{:.2f}s sample:{:.2f}s fetch feature:{:.2f}s fetch memory:{:.2f}s forward:{:.2f}s backward:{:.2f}s memory update:{:.2f}s'.format(
-    avg_time_tot / n_epochs,
-    avg_time_sample / n_epochs,
-    avg_time_fetch_feature / n_epochs,
-    avg_time_fetch_memory / n_epochs,
-    avg_time_forward / n_epochs,
-    avg_time_backward / n_epochs,
-    avg_time_memory_update / n_epochs,
-))
 
 print('Loading model at epoch {}...'.format(best_e))
 model.load_state_dict(torch.load(path_saver))
