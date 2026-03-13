@@ -44,8 +44,8 @@ TEST_PATTERN = re.compile(
     r"test AP:([\d.]+)\s+test (?:AUC|MRR):([\d.]+)"
 )
 
-# log filename: {MODEL}_{DATASET}_{pin_label}.log
-FILENAME_PATTERN = re.compile(r"^(.+?)_(.+?)_(nopin|pin)\.log$")
+# log filename: {MODEL}_{DATASET}_{pin_label}[_dim{N}].log
+FILENAME_PATTERN = re.compile(r"^(.+?)_(.+?)_(nopin|pin)(?:_dim(\d+))?\.log$")
 
 FIELDS = ["total", "sample", "fetch_feature", "fetch_memory", "forward", "backward", "memory_update"]
 
@@ -57,7 +57,7 @@ def parse_log(filepath):
         print(f"Skipping unrecognized file: {filename}")
         return []
 
-    model, dataset, pin_label = m.group(1), m.group(2), m.group(3)
+    model, dataset, pin_label, dim = m.group(1), m.group(2), m.group(3), m.group(4)
 
     with open(filepath, "r") as f:
         content = f.read()
@@ -67,7 +67,7 @@ def parse_log(filepath):
     epoch_matches = EPOCH_PATTERN.findall(content)
     metric_matches = METRIC_PATTERN.findall(content)
     for i, em in enumerate(epoch_matches):
-        row = {"model": model, "dataset": dataset, "pin_memory": pin_label, "epoch": i}
+        row = {"model": model, "dataset": dataset, "pin_memory": pin_label, "dim": dim, "epoch": i}
         for j, field in enumerate(FIELDS):
             row[field] = float(em[j])
         if i < len(metric_matches):
@@ -78,7 +78,7 @@ def parse_log(filepath):
 
     avg_match = AVG_PATTERN.search(content)
     if avg_match:
-        row = {"model": model, "dataset": dataset, "pin_memory": pin_label, "epoch": "avg"}
+        row = {"model": model, "dataset": dataset, "pin_memory": pin_label, "dim": dim, "epoch": "avg"}
         for j, field in enumerate(FIELDS):
             row[field] = float(avg_match.group(j + 1))
         test_match = TEST_PATTERN.search(content)
@@ -112,7 +112,7 @@ def main():
             print(f"  Parsed {lf}: {len(rows)} rows")
         all_rows.extend(rows)
 
-    csv_fields = ["model", "dataset", "pin_memory", "epoch"] + FIELDS + \
+    csv_fields = ["model", "dataset", "pin_memory", "dim", "epoch"] + FIELDS + \
                  ["train_loss", "val_ap", "val_auc", "test_ap", "test_auc_mrr"]
     with open(args.output, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
