@@ -7,7 +7,7 @@
 #   bash exp/freshness/freshness.sh [GPU_ID]
 #
 # Optional env vars for concurrent scheduling:
-#   MAX_CONCURRENT_JOBS (default: 4)
+#   MAX_CONCURRENT_JOBS (default: 10)
 #   EST_MEM_PER_JOB_MB (default: 5000)
 #   MIN_FREE_MEM_MB (default: 1500)
 #   SCHED_POLL_SECS (default: 10)
@@ -18,14 +18,25 @@ GPU="${1:-0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
-PYTHON_BIN="${PYTHON_BIN:-/home/sqp17/miniconda3/envs/simple_py310/bin/python}"
 TMP_CONFIG_DIR="$LOG_DIR/tmp_configs"
+
+if [[ -n "${PYTHON_BIN:-}" ]]; then
+    PYTHON_BIN="$PYTHON_BIN"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+else
+    # Legacy fallback for environments that rely on the original hardcoded path.
+    PYTHON_BIN="/home/sqp17/miniconda3/envs/simple_py310/bin/python"
+fi
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$TMP_CONFIG_DIR"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
-    echo "Python interpreter not found: $PYTHON_BIN" >&2
+    echo "Python interpreter not found or not executable: $PYTHON_BIN" >&2
+    echo "Tip: set an explicit interpreter, e.g. PYTHON_BIN=\"$(command -v python3 2>/dev/null || echo /path/to/python)\" bash exp/freshness/freshness.sh" >&2
     exit 1
 fi
 
@@ -44,7 +55,7 @@ DELAYS=(0 1 2 3 4)
 DIM_OUTS=(128 256 512)
 REPEATS=20
 TARGET_EPOCH=100
-MAX_CONCURRENT_JOBS="${MAX_CONCURRENT_JOBS:-4}"
+MAX_CONCURRENT_JOBS="${MAX_CONCURRENT_JOBS:-10}"
 EST_MEM_PER_JOB_MB="${EST_MEM_PER_JOB_MB:-5000}"
 MIN_FREE_MEM_MB="${MIN_FREE_MEM_MB:-1500}"
 SCHED_POLL_SECS="${SCHED_POLL_SECS:-10}"
