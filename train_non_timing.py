@@ -160,14 +160,40 @@ def eval(mode='val'):
         auc_mrr = float(torch.tensor(aucs_mrrs).mean())
     return ap, auc_mrr
 
-if not os.path.isdir('models'):
-    os.mkdir('models')
+def reserve_checkpoint_path(preferred_path):
+    # Reserve a unique checkpoint file so concurrent runs do not clobber each other.
+    parent = os.path.dirname(preferred_path)
+    os.makedirs(parent, exist_ok=True)
+    stem, ext = os.path.splitext(os.path.basename(preferred_path))
+    candidate = preferred_path
+    suffix_idx = 0
+    while True:
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            return candidate
+        except FileExistsError:
+            suffix_idx += 1
+            candidate = os.path.join(parent, '{}_pid{}_{}.{}'.format(stem, os.getpid(), suffix_idx, ext.lstrip('.')))
+
+
+def atomic_torch_save(state_dict, path):
+    tmp_path = '{}.tmp.{}.{}'.format(path, os.getpid(), time.time_ns())
+    torch.save(state_dict, tmp_path)
+    os.replace(tmp_path, path)
+
+
 if args.model_name == '':
-    path_saver = 'models/{}_{}.pkl'.format(args.data, time.time())
+    preferred_checkpoint_path = 'models/{}_{}.pkl'.format(args.data, time.time())
 else:
-    path_saver = 'models/{}.pkl'.format(args.model_name)
-best_ap = 0
-best_e = 0
+    preferred_checkpoint_path = 'models/{}.pkl'.format(args.model_name)
+path_saver = reserve_checkpoint_path(preferred_checkpoint_path)
+if path_saver != preferred_checkpoint_path:
+    print('Checkpoint path in use; switched to {}'.format(path_saver))
+
+best_ap = float('-inf')
+best_e = -1
+checkpoint_saved = False
 val_losses = list()
 if mailbox is not None and args.memory_update_delay_batches > 0:
     print('Delayed memory update enabled: {} minibatch(es)'.format(args.memory_update_delay_batches))
@@ -249,8 +275,16 @@ for e in range(train_param['epoch']):
     if e > 2 and ap > best_ap:
         best_e = e
         best_ap = ap
-        torch.save(model.state_dict(), path_saver)
+        atomic_torch_save(model.state_dict(), path_saver)
+        checkpoint_saved = True
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}'.format(total_loss, ap, auc))
+
+if not checkpoint_saved:
+    # Ensure a loadable checkpoint always exists (e.g., short runs without best-epoch trigger).
+    best_e = train_param['epoch'] - 1
+    atomic_torch_save(model.state_dict(), path_saver)
+    checkpoint_saved = True
+    print('No best checkpoint was selected; saved final epoch model to {}'.format(path_saver))
 
 print('Loading model at epoch {}...'.format(best_e))
 model.load_state_dict(torch.load(path_saver))
