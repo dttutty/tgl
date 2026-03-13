@@ -147,24 +147,18 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
     if edge_feats is not None:
         for mfg in mfgs:
             for b in mfg:
-                # 1. 移除 if b.num_src_nodes() > b.num_dst_nodes(): 限制
-                # 这样可以确保 i 与 eids 列表一一对应
+                if b.num_edges() == 0 or 'ID' not in b.edata:
+                    continue
                 if pinned:
                     if eids is not None:
                         idx = eids[i]
                     else:
                         idx = b.edata['ID'].cpu().long()
-                    
-                    # 2. 增加安全性检查：如果 Block 没有边，就跳过赋值
-                    if b.num_edges() > 0:
-                        torch.index_select(edge_feats, 0, idx, out=efeat_buffs[i][:idx.shape[0]])
-                        b.edata['f'] = efeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
-                    
+                    torch.index_select(edge_feats, 0, idx, out=efeat_buffs[i][:idx.shape[0]])
+                    b.edata['f'] = efeat_buffs[i][:idx.shape[0]].cuda(non_blocking=True)
                     i += 1
                 else:
-                    # 非 pinned 模式
-                    if b.num_edges() > 0:
-                        b.edata['f'] = gather_feature_rows(edge_feats, b.edata['ID'], b.device)
+                    b.edata['f'] = gather_feature_rows(edge_feats, b.edata['ID'], b.device)
             
     return mfgs
 
