@@ -57,6 +57,7 @@ from df_split import make_balance_plan
 from shm_naming import init_run_id, build_shm_namer
 import torch.distributed as dist # 确保已有或添加
 from torch.profiler import profile, record_function, ProfilerActivity # 新增
+from torch.distributed.algorithms.ddp_comm_hooks.default_hooks import allreduce_hook
 
         
 def set_seed(seed):
@@ -227,6 +228,31 @@ if args.local_rank < args.num_gpus:
         mailbox.allocate_pinned_memory_buffers(sample_param, train_param['batch_size'])
     tot_loss = 0
     prev_thread = None
+
+    # ---- per-step forward/backward timing collectors ----
+    timing_records = []  # list of dicts, one per training step
+
+    class _FirstARHook:
+        """Records a CUDA event at the start of the first DDP AllReduce each backward."""
+        def __init__(self):
+            self._bwd_start_ev = None
+            self._fired = False
+            self.records = []  # list of (bwd_start_ev, first_ar_ev) pairs
+
+        def arm(self, bwd_start_ev: torch.cuda.Event) -> None:
+            self._bwd_start_ev = bwd_start_ev
+            self._fired = False
+
+        def __call__(self, state, bucket):
+            if not self._fired and self._bwd_start_ev is not None:
+                ev = torch.cuda.Event(enable_timing=True)
+                ev.record()
+                self.records.append((self._bwd_start_ev, ev))
+                self._fired = True
+            return allreduce_hook(state, bucket)
+
+    ar_hook = _FirstARHook()
+    model.register_comm_hook(state=nccl_group, hook=ar_hook)
     # Train start->start intervals (excluding val/test) for fair comparison
     train_s2s_pairs = []   # list[(cuda_event_prev, cuda_event_curr)] for GPU-stream intervals
     train_s2s_wall = []    # list[float] wall-clock intervals in seconds
@@ -311,6 +337,31 @@ if args.local_rank < args.num_gpus:
 
                 print(f"[rank {args.local_rank}] minibatch start->start (wall): "
                       f"n={n} avg={avg*1000:.3f}ms p50={p50*1000:.3f}ms p90={p90*1000:.3f}ms p99={p99*1000:.3f}ms")
+
+            # ---- forward / backward breakdown ----
+            if len(timing_records) >= 1:
+                torch.cuda.synchronize()
+
+                def _print_stats(label, pairs):
+                    valid = [(a, b) for a, b in pairs if a is not None and b is not None]
+                    if not valid:
+                        return
+                    dts = sorted(a.elapsed_time(b) for a, b in valid)
+                    n = len(dts)
+                    avg = sum(dts) / n
+                    p50 = dts[int(0.50 * (n - 1))]
+                    p90 = dts[int(0.90 * (n - 1))]
+                    p99 = dts[int(0.99 * (n - 1))]
+                    print(f"[rank {args.local_rank}] {label}: "
+                          f"n={n} avg={avg:.3f}ms p50={p50:.3f}ms p90={p90:.3f}ms p99={p99:.3f}ms")
+
+                _print_stats("forward total       ", [r['fwd']  for r in timing_records])
+                _print_stats("  memory_update     ", [r['mem']  for r in timing_records])
+                _print_stats("  get_emb (excl mem)", [r['emb']  for r in timing_records])
+                _print_stats("  edge_predictor    ", [r['pred'] for r in timing_records])
+                _print_stats("backward total      ", [r['bwd']  for r in timing_records])
+                _print_stats("bwd->first allreduce", ar_hook.records)
+
             # --------------------------------------
             break
         elif my_model_state[0] == 4:
@@ -376,14 +427,32 @@ if args.local_rank < args.num_gpus:
                 
                 model.train()
                 optimizer.zero_grad()
-                
+
+                ev_fwd_s = torch.cuda.Event(enable_timing=True)
+                ev_fwd_e = torch.cuda.Event(enable_timing=True)
+                ev_bwd_s = torch.cuda.Event(enable_timing=True)
+                ev_bwd_e = torch.cuda.Event(enable_timing=True)
+
                 with record_function("model_step"):
+                    ev_fwd_s.record()
                     pred_pos, pred_neg = model(mfgs)
+                    ev_fwd_e.record()
                     loss = creterion(pred_pos, torch.ones_like(pred_pos))
                     loss += creterion(pred_neg, torch.zeros_like(pred_neg))
+                    ev_bwd_s.record()
+                    ar_hook.arm(ev_bwd_s)
                     loss.backward()
+                    ev_bwd_e.record()
                     optimizer.step()
-                    
+
+                _te = model.module._timing_events if hasattr(model.module, '_timing_events') else {}
+                timing_records.append({
+                    'fwd':  (ev_fwd_s, ev_fwd_e),
+                    'bwd':  (ev_bwd_s, ev_bwd_e),
+                    'mem':  _te.get('mem',  (None, None)),
+                    'emb':  _te.get('emb',  (None, None)),
+                    'pred': _te.get('pred', (None, None)),
+                })
                     
                 if should_prof == True and  cur_epoch == target_profile_epoch:
                     if cur_step == profile_steps - 1:
@@ -436,11 +505,31 @@ if args.local_rank < args.num_gpus:
                 mfgs = prev_thread.get_mfgs()
                 model.train()
                 optimizer.zero_grad()
+
+                ev_fwd_s = torch.cuda.Event(enable_timing=True)
+                ev_fwd_e = torch.cuda.Event(enable_timing=True)
+                ev_bwd_s = torch.cuda.Event(enable_timing=True)
+                ev_bwd_e = torch.cuda.Event(enable_timing=True)
+
+                ev_fwd_s.record()
                 pred_pos, pred_neg = model(mfgs)
+                ev_fwd_e.record()
                 loss = creterion(pred_pos, torch.ones_like(pred_pos))
                 loss += creterion(pred_neg, torch.zeros_like(pred_neg))
+                ev_bwd_s.record()
+                ar_hook.arm(ev_bwd_s)
                 loss.backward()
+                ev_bwd_e.record()
                 optimizer.step()
+
+                _te = model.module._timing_events if hasattr(model.module, '_timing_events') else {}
+                timing_records.append({
+                    'fwd':  (ev_fwd_s, ev_fwd_e),
+                    'bwd':  (ev_bwd_s, ev_bwd_e),
+                    'mem':  _te.get('mem',  (None, None)),
+                    'emb':  _te.get('emb',  (None, None)),
+                    'pred': _te.get('pred', (None, None)),
+                })
                 with torch.no_grad():
                     tot_loss += float(loss)
                 if mailbox is not None:
