@@ -63,3 +63,4 @@ exp/benchmark_timing/tmp_configs/*
 *.bmp
 *.jpeg
 *.png
+*.csv
