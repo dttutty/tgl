@@ -12,8 +12,8 @@ LOG_DIR="$SCRIPT_DIR/benchmark_timing"
 
 mkdir -p "$LOG_DIR"
 
-MODELS=("TGN" )
-CONFIGS=("config/TGN.yml" )
+MODELS=("JODIE" )
+CONFIGS=("config/JODIE.yml" )
 
 DATASETS=("WIKI" )
 # extra args per dataset (index-matched with DATASETS)

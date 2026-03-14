@@ -11,8 +11,8 @@ df_all["dim"] = pd.to_numeric(df_all["dim"], errors="coerce").astype("Int64")
 STAGES = ["sample", "fetch_feature", "fetch_memory", "forward", "backward", "memory_update"]
 COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948"]
 
-MODELS   = ["TGN"]
-DATASETS = ["WIKI"]
+MODELS   = ["TGN", "APAN", "JODIE"]
+DATASETS = ["WIKI", "LASTFM", "MOOC", "REDDIT"]
 PINS     = ["pin", "nopin"]
 
 out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plots")
