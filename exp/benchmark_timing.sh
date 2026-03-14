@@ -12,23 +12,23 @@ LOG_DIR="$SCRIPT_DIR/benchmark_timing"
 
 mkdir -p "$LOG_DIR"
 
-MODELS=("TGN" "APAN" "JODIE")
-CONFIGS=("config/TGN.yml" "config/APAN.yml" "config/JODIE.yml")
+MODELS=("TGN" )
+CONFIGS=("config/TGN.yml" )
 
-DATASETS=("LASTFM" "MOOC" "REDDIT" "WIKIPEDIA" )
+DATASETS=("WIKI" )
 # extra args per dataset (index-matched with DATASETS)
 EXTRA_ARGS=(
     "--rand_edge_features 128"   # LASTFM
     "--rand_edge_features 128"   # MOOC
     ""                           # REDDIT
-    ""                           # WIKIPEDIA
+    ""                           # WIKI
     ""                           # GDELT
     ""                           # MAG
 )
 
 PIN_MODES=("nopin" "pin")
 PIN_FLAGS=("" "--pin_memory")
-DIM_OUTS=(128 256 384 512 640 768 896 1024)
+DIM_OUTS=(128 256 384 512)
 
 TMP_CONFIG_DIR="$LOG_DIR/tmp_configs"
 mkdir -p "$TMP_CONFIG_DIR"
