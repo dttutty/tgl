@@ -232,6 +232,7 @@ if args.local_rank < args.num_gpus:
     train_s2s_wall = []    # list[float] wall-clock intervals in seconds
     _last_train_ev = None
     _last_train_wall = None
+    WARMUP_INTERVALS = 3   # drop first N intervals to skip CUDA JIT / allocator warmup
     
     
     
@@ -287,30 +288,33 @@ if args.local_rank < args.num_gpus:
                 dt_ms = [
                     ev_prev.elapsed_time(ev_curr)
                     for (ev_prev, ev_curr) in train_s2s_pairs
-                ]
+                ][WARMUP_INTERVALS:]
 
-                dt_ms_sorted = sorted(dt_ms)
-                n = len(dt_ms_sorted)
-                p50 = dt_ms_sorted[int(0.50*(n-1))]
-                p90 = dt_ms_sorted[int(0.90*(n-1))]
-                p99 = dt_ms_sorted[int(0.99*(n-1))]
-                avg = sum(dt_ms_sorted) / n
+                if dt_ms:
+                    dt_ms_sorted = sorted(dt_ms)
+                    n = len(dt_ms_sorted)
+                    p50 = dt_ms_sorted[int(0.50*(n-1))]
+                    p90 = dt_ms_sorted[int(0.90*(n-1))]
+                    p99 = dt_ms_sorted[int(0.99*(n-1))]
+                    avg = sum(dt_ms_sorted) / n
 
-                print(f"[rank {args.local_rank}] minibatch start->start (GPU stream): "
-                      f"n={n} avg={avg:.3f}ms p50={p50:.3f}ms p90={p90:.3f}ms p99={p99:.3f}ms")
+                    print(f"[rank {args.local_rank}] minibatch start->start (GPU stream): "
+                          f"n={n} avg={avg:.3f}ms p50={p50:.3f}ms p90={p90:.3f}ms p99={p99:.3f}ms")
 
             # wall-clock summary (same boundaries as GPU-stream metric)
             if len(train_s2s_wall) >= 1:
-                dt_s = list(train_s2s_wall)
-                dt_s_sorted = sorted(dt_s)
-                n = len(dt_s_sorted)
-                p50 = dt_s_sorted[int(0.50*(n-1))]
-                p90 = dt_s_sorted[int(0.90*(n-1))]
-                p99 = dt_s_sorted[int(0.99*(n-1))]
-                avg = sum(dt_s_sorted) / n
+                dt_s = list(train_s2s_wall)[WARMUP_INTERVALS:]
 
-                print(f"[rank {args.local_rank}] minibatch start->start (wall): "
-                      f"n={n} avg={avg*1000:.3f}ms p50={p50*1000:.3f}ms p90={p90*1000:.3f}ms p99={p99*1000:.3f}ms")
+                if dt_s:
+                    dt_s_sorted = sorted(dt_s)
+                    n = len(dt_s_sorted)
+                    p50 = dt_s_sorted[int(0.50*(n-1))]
+                    p90 = dt_s_sorted[int(0.90*(n-1))]
+                    p99 = dt_s_sorted[int(0.99*(n-1))]
+                    avg = sum(dt_s_sorted) / n
+
+                    print(f"[rank {args.local_rank}] minibatch start->start (wall): "
+                          f"n={n} avg={avg*1000:.3f}ms p50={p50*1000:.3f}ms p90={p90*1000:.3f}ms p99={p99*1000:.3f}ms")
             # --------------------------------------
             break
         elif my_model_state[0] == 4:

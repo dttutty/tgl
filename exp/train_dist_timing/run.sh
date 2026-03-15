@@ -28,15 +28,14 @@ TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs"
 
 mkdir -p "$LOG_DIR" "$TMP_CONFIG_DIR"
 
-MODELS=("TGN" "APAN" "JODIE")
-CONFIGS=("config/TGN.yml" "config/APAN.yml" "config/JODIE.yml")
+MODELS=("APAN")
+CONFIGS=("config/APAN.yml")
 
-DATASETS=("WIKI" "LASTFM" "MOOC" "REDDIT")
+DATASETS=("LASTFM")
 EXTRA_ARGS=(
-  ""                      # WIKI
+
   "--rnd_edim 128"        # LASTFM
-  "--rnd_edim 128"        # MOOC
-  ""                      # REDDIT
+
 )
 
 # Naming compatibility with benchmark_timing.

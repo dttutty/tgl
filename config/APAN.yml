@@ -15,7 +15,7 @@ memory:
     mail_combine: 'last'
     memory_update: 'transformer'
     attention_head: 2
-    mailbox_size: 16
+    mailbox_size: 10
     combine_node_feature: False
     dim_out: 128
 gnn:
