@@ -46,21 +46,23 @@ class GeneralModel(torch.nn.Module):
             self.combiner = torch.nn.RNN(gnn_param['dim_out'], gnn_param['dim_out'])
     
     def forward(self, mfgs, neg_samples=1):
+        # --- CUDA timing events ---
+        _ev_mem_s = torch.cuda.Event(enable_timing=True)
+        _ev_mem_e = torch.cuda.Event(enable_timing=True)
+        _ev_emb_s = torch.cuda.Event(enable_timing=True)
+        _ev_emb_e = torch.cuda.Event(enable_timing=True)
+        _ev_pred_s = torch.cuda.Event(enable_timing=True)
+        _ev_pred_e = torch.cuda.Event(enable_timing=True)
+
         if self.memory_param['type'] == 'node':
+            _ev_mem_s.record()
             self.memory_updater(mfgs[0])
+            _ev_mem_e.record()
+
+        _ev_emb_s.record()
         out = list()
         for l in range(self.gnn_param['layer']):
             for h in range(self.sample_param['history']):
-                # print("Block srcdata detail:")
-                # print("mfgs[l][h]: ", mfgs[l][h])
-                # for k, v in mfgs[l][h].srcdata.items():
-                #     if isinstance(v, torch.Tensor):
-                #         print(
-                #             f"{k:12s} | dtype={v.dtype} | shape={tuple(v.shape)} | device={v.device} | requires_grad={v.requires_grad}"
-                #         )
-                #     else:
-                #         print(f"{k:12s} | type={type(v)}")
-
                 rst = self.layers['l' + str(l) + 'h' + str(h)](mfgs[l][h])
                 if 'time_transform' in self.gnn_param and self.gnn_param['time_transform'] == 'JODIE':
                     rst = self.layers['l0h' + str(h) + 't'](rst, mfgs[l][h].srcdata['mem_ts'], mfgs[l][h].srcdata['ts'])
@@ -73,7 +75,18 @@ class GeneralModel(torch.nn.Module):
         else:
             out = torch.stack(out, dim=0)
             out = self.combiner(out)[0][-1, :, :]
-        return self.edge_predictor(out, neg_samples=neg_samples)
+        _ev_emb_e.record()
+
+        _ev_pred_s.record()
+        result = self.edge_predictor(out, neg_samples=neg_samples)
+        _ev_pred_e.record()
+
+        self._timing_events = {
+            'mem': (_ev_mem_s, _ev_mem_e) if self.memory_param['type'] == 'node' else (None, None),
+            'emb': (_ev_emb_s, _ev_emb_e),
+            'pred': (_ev_pred_s, _ev_pred_e),
+        }
+        return result
 
     def get_emb(self, mfgs):
         if self.memory_param['type'] == 'node':
