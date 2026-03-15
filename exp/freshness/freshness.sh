@@ -44,20 +44,17 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
     exit 1
 fi
 
-MODELS=("TGN" "APAN" "JODIE")
-CONFIGS=("config/TGN.yml" "config/APAN.yml" "config/JODIE.yml")
+MODELS=("TGN")
+CONFIGS=("config/TGN.yml")
 
-DATASETS=("LASTFM" "MOOC" "REDDIT" "WIKI")
+DATASETS=("LASTFM")
 EXTRA_ARGS=(
     "--rand_edge_features 128"
-    "--rand_edge_features 128"
-    ""
-    ""
 )
 
-DELAYS=(0 1 2 3 4)
-DIM_OUTS=(128 256 512)
-REPEATS=20
+DELAYS=(1 2 3)
+DIM_OUTS=(128)
+REPEATS=10
 TARGET_EPOCH=100
 MAX_CONCURRENT_JOBS="${MAX_CONCURRENT_JOBS:-16}"
 EST_MEM_PER_JOB_MB="${EST_MEM_PER_JOB_MB:-5000}"

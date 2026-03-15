@@ -36,6 +36,10 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def sync_cuda():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
 # set_seed(0)
 
 node_feats, edge_feats = load_feat(args.data, args.rand_edge_features, args.rand_node_features)
@@ -152,7 +156,7 @@ def eval(mode='val'):
                 mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block, neg_samples=neg_samples)
                 mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts, neg_samples=neg_samples)
         if mode == 'val':
-            val_losses.append(float(total_loss))
+            pass
     ap = float(torch.tensor(aps).mean())
     if neg_samples > 1:
         auc_mrr = float(torch.cat(aucs_mrrs).mean())
@@ -165,105 +169,29 @@ if args.model_name == '':
 else:
     path_saver = 'models/{}.pkl'.format(args.model_name)
 
-best_ap = float('-inf')
-best_e = -1
-checkpoint_saved = False
-val_losses = list()
-if mailbox is not None and args.memory_update_delay_batches > 0:
-    print('Delayed memory update enabled: {} minibatch(es)'.format(args.memory_update_delay_batches))
+print('Loading model directly to evaluate sequential testing impact...')
+model.load_state_dict(torch.load(path_saver))
+model.eval()
 
-for e in range(train_param['epoch']):
-    print('Epoch {:d}:'.format(e))
-    total_loss = 0.0
-    # training
-    model.train()
-    if sampler is not None:
-        sampler.reset()
-    if mailbox is not None:
-        mailbox.reset()
-        model.memory_updater.last_updated_nid = None
-    memory_update_queue = deque()
+if sampler is not None:
+    sampler.reset()
+if mailbox is not None:
+    mailbox.reset()
+    model.memory_updater.last_updated_nid = None
 
-    def flush_memory_update(task):
-        if mailbox is None:
-            return
-        if task['nid'] is None or task['memory'] is None or task['updated_ts'] is None:
-            return
-        mailbox.update_mailbox(task['nid'], task['memory'], task['root_nodes'], task['ts'], task['mem_edge_feats'], task['block'])
-        mailbox.update_memory(task['nid'], task['memory'], task['root_nodes'], task['updated_ts'])
+# "Warm up" memory using training data
+print("Warming up memory with train split...")
+eval('train')
 
-    for _, rows in df[:train_edge_end].groupby(df[:train_edge_end].index // train_param['batch_size']):
-        root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-        ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
-        if sampler is not None:
-            if 'no_neg' in sample_param and sample_param['no_neg']:
-                pos_root_end = root_nodes.shape[0] * 2 // 3
-                sampler.sample(root_nodes[:pos_root_end], ts[:pos_root_end])
-            else:
-                sampler.sample(root_nodes, ts)
-            ret = sampler.get_ret()
-        if gnn_param['arch'] != 'identity':
-            mfgs = to_dgl_blocks(ret, sample_param['history'], cuda=False)
-        else:
-            mfgs = node_to_dgl_blocks(root_nodes, ts, cuda=False)
-        if args.pin_memory:
-            nids, eids = get_ids(mfgs, node_feats, edge_feats)
-        mfgs = mfgs_to_cuda(mfgs)
-        prepare_input(mfgs, node_feats, edge_feats, combine_first=combine_first,
-                      pinned=args.pin_memory, nfeat_buffs=pinned_nfeat_buffs, efeat_buffs=pinned_efeat_buffs,
-                      nids=nids if args.pin_memory else None, eids=eids if args.pin_memory else None)
-        if mailbox is not None:
-            mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=args.pin_memory)
-        optimizer.zero_grad()
-        pred_pos, pred_neg = model(mfgs)
-        loss = creterion(pred_pos, torch.ones_like(pred_pos))
-        loss += creterion(pred_neg, torch.zeros_like(pred_neg))
-        total_loss += float(loss) * train_param['batch_size']
-        loss.backward()
-        optimizer.step()
-        if mailbox is not None:
-            eid = rows['Unnamed: 0'].values
-            mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
-            block = None
-            if memory_param['deliver_to'] == 'neighbors':
-                block = to_dgl_blocks(ret, sample_param['history'], reverse=True)[0][0]
+# Evaluate on Validation split (memory keeps accumulating from Train)
+print("Evaluating on val split...")
+val_ap, val_auc = eval('val')
+print('\tval AP:{:4f}  val AUC:{:4f}'.format(val_ap, val_auc))
 
-            memory_update_queue.append({
-                'nid': model.memory_updater.last_updated_nid.detach().clone() if model.memory_updater.last_updated_nid is not None else None,
-                'memory': model.memory_updater.last_updated_memory.detach().clone() if model.memory_updater.last_updated_memory is not None else None,
-                'updated_ts': model.memory_updater.last_updated_ts.detach().clone() if model.memory_updater.last_updated_ts is not None else None,
-                'root_nodes': root_nodes.copy(),
-                'ts': ts.copy(),
-                'mem_edge_feats': mem_edge_feats.detach().clone() if mem_edge_feats is not None else None,
-                'block': block,
-            })
-
-            if len(memory_update_queue) > args.memory_update_delay_batches:
-                flush_memory_update(memory_update_queue.popleft())
-
-    if mailbox is not None and len(memory_update_queue) > 0:
-        while len(memory_update_queue) > 0:
-            flush_memory_update(memory_update_queue.popleft())
-
-    ap, auc = eval('val')
-    test_ap, test_auc = eval('test')
-
-    if e > 2 and ap > best_ap:
-        best_e = e
-        best_ap = ap
-        best_test_ap = test_ap
-        best_test_auc = test_auc
-    print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}, test ap:{:4f}  test auc:{:4f}'.format(total_loss, ap, auc, test_ap, test_auc))
-
-if best_e == -1:
-    # Ensure a loadable checkpoint always exists (e.g., short runs without best-epoch trigger).
-    best_e = train_param['epoch'] - 1
-    best_test_ap = test_ap
-    best_test_auc = test_auc
-    print('No best checkpoint was selected; returning final epoch test scores')
-
-print('Best model at epoch {} had val AP: {:.4f}'.format(best_e, best_ap))
+# Evaluate on Test split IMMEDIATELY (memory keeps accumulating from Val)
+print("Evaluating on test split IMMEDIATELY (no reset)...")
+ap, auc = eval('test')
 if args.eval_neg_samples > 1:
-    print('\ttest AP:{:4f}  test MRR:{:4f}'.format(best_test_ap, best_test_auc))
+    print('\ttest AP:{:4f}  test MRR:{:4f}'.format(ap, auc))
 else:
-    print('\ttest AP:{:4f}  test AUC:{:4f}'.format(best_test_ap, best_test_auc))
+    print('\ttest AP:{:4f}  test AUC:{:4f}'.format(ap, auc))
