@@ -3,10 +3,10 @@
 Parse benchmark timing logs and generate a CSV.
 
 Usage:
-    python experiment/parse_timing_logs.py [--log_dir experiment/benchmark_timing]
+    python exp/benchmark_timing/parse.py [--log_dir exp/benchmark_timing/logs]
 
 Output:
-    experiment/timing_results.csv
+    exp/benchmark_timing/results.csv
 """
 import argparse
 import csv
@@ -93,12 +93,12 @@ def parse_log(filepath):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log_dir", type=str,
-                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "benchmark_timing"))
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs"))
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
 
     if args.output is None:
-        args.output = os.path.join(os.path.dirname(os.path.abspath(__file__)), "timing_results.csv")
+        args.output = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.csv")
 
     log_files = sorted(glob.glob(os.path.join(args.log_dir, "*.log")))
     if not log_files:

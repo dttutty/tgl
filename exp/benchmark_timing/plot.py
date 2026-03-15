@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "timing_results.csv")
+csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results.csv")
 df_all = pd.read_csv(csv_path)
 df_all["dim"] = pd.to_numeric(df_all["dim"], errors="coerce").astype("Int64")
 

@@ -252,7 +252,12 @@ if args.local_rank < args.num_gpus:
             return allreduce_hook(state, bucket)
 
     ar_hook = _FirstARHook()
-    model.register_comm_hook(state=nccl_group, hook=ar_hook)
+
+    # PyTorch DDP checks hook.__name__, so register a named function wrapper.
+    def first_ar_comm_hook(state, bucket):
+        return ar_hook(state, bucket)
+
+    model.register_comm_hook(state=nccl_group, hook=first_ar_comm_hook)
     # Train start->start intervals (excluding val/test) for fair comparison
     train_s2s_pairs = []   # list[(cuda_event_prev, cuda_event_curr)] for GPU-stream intervals
     train_s2s_wall = []    # list[float] wall-clock intervals in seconds
