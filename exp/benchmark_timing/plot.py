@@ -12,7 +12,7 @@ STAGES = ["sample", "fetch_feature", "fetch_memory", "forward", "backward", "mem
 COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948"]
 
 MODELS   = ["TGN", "APAN", "JODIE"]
-DATASETS = ["WIKI", "LASTFM", "MOOC", "REDDIT"]
+DATASETS = ["LASTFM", "WIKI", "MOOC", "REDDIT"]
 PINS     = ["pin", "nopin"]
 
 out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plots")

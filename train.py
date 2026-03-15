@@ -40,7 +40,7 @@ def sync_cuda():
     if torch.cuda.is_available():
         torch.cuda.synchronize()
 
-# set_seed(0)
+set_seed(42)
 
 node_feats, edge_feats = load_feat(args.data, args.rand_edge_features, args.rand_node_features)
 g, df = load_graph(args.data)
@@ -289,10 +289,13 @@ for e in range(train_param['epoch']):
         time_memory_update += time.perf_counter() - t_memory_update_s
 
     ap, auc = eval('val')
+    test_ap, test_auc = eval('test')
+
     if e > 2 and ap > best_ap:
         best_e = e
         best_ap = ap
-        torch.save(model.state_dict(), path_saver)
+        best_test_ap = test_ap
+        best_test_auc = test_auc
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}'.format(total_loss, ap, auc))
     print('\ttotal time:{:.2f}s sample:{:.2f}s fetch feature:{:.2f}s fetch memory:{:.2f}s forward:{:.2f}s backward:{:.2f}s memory update:{:.2f}s'.format(
         time_tot,
@@ -323,18 +326,8 @@ print('\ttotal time:{:.2f}s sample:{:.2f}s fetch feature:{:.2f}s fetch memory:{:
     avg_time_memory_update / n_epochs,
 ))
 
-print('Loading model at epoch {}...'.format(best_e))
-model.load_state_dict(torch.load(path_saver))
-model.eval()
-if sampler is not None:
-    sampler.reset()
-if mailbox is not None:
-    mailbox.reset()
-    model.memory_updater.last_updated_nid = None
-    eval('train')
-    eval('val')
-ap, auc = eval('test')
+print('Best model at epoch {} had val AP: {:.4f}'.format(best_e, best_ap))
 if args.eval_neg_samples > 1:
-    print('\ttest AP:{:4f}  test MRR:{:4f}'.format(ap, auc))
+    print('\ttest AP:{:4f}  test MRR:{:4f}'.format(best_test_ap, best_test_auc))
 else:
-    print('\ttest AP:{:4f}  test AUC:{:4f}'.format(ap, auc))
+    print('\ttest AP:{:4f}  test AUC:{:4f}'.format(best_test_ap, best_test_auc))
