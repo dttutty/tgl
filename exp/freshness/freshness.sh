@@ -16,7 +16,7 @@
 
 set -uo pipefail
 
-GPUS_ARG="${1:-0,1,2,3,4,5,6,7}"
+GPUS_ARG="${1:-0,1}"
 IFS=',' read -r -a GPUS <<< "$GPUS_ARG"
 NUM_GPUS="${#GPUS[@]}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -52,8 +52,8 @@ EXTRA_ARGS=(
     "--rand_edge_features 128"
 )
 
-DELAYS=(0 1 2 3)
-DIM_OUTS=(256)
+DELAYS=(1 2 3)
+DIM_OUTS=(128)
 REPEATS=10
 TARGET_EPOCH=100
 MAX_CONCURRENT_JOBS="${MAX_CONCURRENT_JOBS:-16}"
@@ -145,16 +145,21 @@ wait_for_slot() {
         total_active=$(get_active_count)
         if [[ "$total_active" -lt "$MAX_CONCURRENT_JOBS" ]]; then
             local _g _cnt _free
+            local best_gpu="" best_cnt=99999
             for _g in "${GPUS[@]}"; do
                 _cnt="${gpu_active_count[$_g]:-0}"
-                if [[ "$_cnt" -lt "$max_per_gpu" ]]; then
+                if [[ "$_cnt" -lt "$max_per_gpu" ]] && [[ "$_cnt" -lt "$best_cnt" ]]; then
                     _free=$(gpu_mem_free_mb "$_g")
                     if [[ "$_free" -eq -1 ]] || [[ "$_free" -ge "$need_mem" ]]; then
-                        chosen_gpu="$_g"
-                        return 0
+                        best_gpu="$_g"
+                        best_cnt="$_cnt"
                     fi
                 fi
             done
+            if [[ -n "$best_gpu" ]]; then
+                chosen_gpu="$best_gpu"
+                return 0
+            fi
         fi
 
         echo "[SCHED] active=${total_active}/${MAX_CONCURRENT_JOBS}, no GPU slot available; waiting ${SCHED_POLL_SECS}s"
