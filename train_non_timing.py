@@ -38,9 +38,17 @@ def set_seed(seed):
 
 # set_seed(0)
 
+sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
+print_run_configuration(
+    args,
+    sample_param,
+    memory_param,
+    gnn_param,
+    train_param,
+    config_path=args.config,
+)
 node_feats, edge_feats = load_feat(args.data, args.rand_edge_features, args.rand_node_features)
 g, df = load_graph(args.data)
-sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
 train_edge_end = df[df['ext_roll'].gt(0)].index[0]
 val_edge_end = df[df['ext_roll'].gt(1)].index[0]
 

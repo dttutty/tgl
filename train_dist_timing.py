@@ -67,6 +67,17 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
+print_run_configuration(
+    args,
+    sample_param,
+    memory_param,
+    gnn_param,
+    train_param,
+    config_path=args.config,
+    rank=args.local_rank,
+)
+
 torch.distributed.init_process_group(backend='gloo', timeout=datetime.timedelta(0, 3600))
 
 run_id = init_run_id(args.local_rank, src_rank=0, provided_run_id=args.run_id)
@@ -108,7 +119,6 @@ if args.local_rank > 0 and args.local_rank < args.num_gpus:
         node_feats = get_shared_mem_array(shm_name('node_feats'), (dim_feats[0], dim_feats[1]), dtype=dim_feats[2])
     if dim_feats[3] > 0:
         edge_feats = get_shared_mem_array(shm_name('edge_feats'), (dim_feats[3], dim_feats[4]), dtype=dim_feats[5])
-sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
 orig_batch_size = train_param['batch_size']
 if args.local_rank == 0:
     if not os.path.isdir('models'):

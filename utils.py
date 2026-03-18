@@ -6,6 +6,24 @@ import time
 import pandas as pd
 import numpy as np
 
+def _yaml_safe_value(value):
+    if isinstance(value, dict):
+        return {k: _yaml_safe_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_yaml_safe_value(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+def _yaml_block(data):
+    dumped = yaml.safe_dump(
+        _yaml_safe_value(data),
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+    )
+    return dumped.rstrip() if dumped else ''
+
 def load_feat(d, rand_de, rand_dn):
     node_feats = None
     if os.path.exists('DATA/{}/node_features.pt'.format(d)):
@@ -43,6 +61,34 @@ def parse_config(f):
     gnn_param = conf['gnn'][0]
     train_param = conf['train'][0]
     return sample_param, memory_param, gnn_param, train_param
+
+def print_run_configuration(args, sample_param=None, memory_param=None, gnn_param=None, train_param=None, config_path=None, rank=None):
+    if rank is not None and rank != 0:
+        return
+
+    header = 'Run configuration'
+    if rank is not None:
+        header = '{} (rank {})'.format(header, rank)
+
+    print('=' * 80)
+    print(header)
+    if config_path:
+        print('config_path: {}'.format(config_path))
+    print('args:')
+    print(_yaml_block(vars(args)) or '{}')
+    print('config:')
+    if all(section is not None for section in [sample_param, memory_param, gnn_param, train_param]):
+        print(_yaml_block({
+            'sampling': [sample_param],
+            'memory': [memory_param],
+            'gnn': [gnn_param],
+            'train': [train_param],
+        }) or '{}')
+    elif config_path:
+        print('<config not loaded>')
+    else:
+        print('<config not provided>')
+    print('=' * 80)
 
 def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
     mfgs = list()
@@ -191,4 +237,3 @@ def get_pinned_buffers(sample_param, batch_size, node_feats, edge_feats):
         for _ in range(sample_param['history']):
             pinned_nfeat_buffs.insert(0, torch.zeros((limit, node_feats.shape[1]), pin_memory=True))
     return pinned_nfeat_buffs, pinned_efeat_buffs
-

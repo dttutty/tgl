@@ -30,6 +30,21 @@ from utils import *
 from tqdm import tqdm
 from sklearn.metrics import average_precision_score, f1_score
 
+sample_param = None
+memory_param = None
+gnn_param = None
+train_param = None
+if args.config and os.path.isfile(args.config):
+    sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
+print_run_configuration(
+    args,
+    sample_param,
+    memory_param,
+    gnn_param,
+    train_param,
+    config_path=args.config if args.config else None,
+)
+
 ldf = pd.read_csv('DATA/{}/labels.csv'.format(args.data))
 role = ldf['ext_roll'].values
 # train_node_end = ldf[ldf['ext_roll'].gt(0)].index[0]
@@ -44,7 +59,16 @@ if not os.path.isfile('embs/' + emb_file_name):
 
     node_feats, edge_feats = load_feat(args.data)
     g, df = load_graph(args.data)
-    sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
+    if sample_param is None:
+        sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
+        print_run_configuration(
+            args,
+            sample_param,
+            memory_param,
+            gnn_param,
+            train_param,
+            config_path=args.config if args.config else None,
+        )
     train_edge_end = df[df['ext_roll'].gt(0)].index[0]
     val_edge_end = df[df['ext_roll'].gt(1)].index[0]
 
