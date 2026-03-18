@@ -101,6 +101,25 @@ with open(dst, "w", encoding="utf-8") as f:
 PY
 }
 
+get_train_meta() {
+    local cfg="$1"
+
+    "$PYTHON_BIN" - "$cfg" <<'PY'
+import sys
+import yaml
+
+cfg = sys.argv[1]
+with open(cfg, "r", encoding="utf-8") as f:
+    conf = yaml.safe_load(f)
+
+if "train" not in conf or not conf["train"]:
+    raise RuntimeError(f"No train section found in {cfg}")
+
+train = conf["train"][0]
+print(f"{int(train['batch_size'])}\t{int(train['epoch'])}")
+PY
+}
+
 load_experiment_rows() {
     "$PYTHON_BIN" - "$CONFIG_PATH" <<'PY'
 import sys
@@ -184,9 +203,10 @@ for row in "${experiment_rows[@]}"; do
         make_dim_config "$REPO_ROOT/$config" "$dim_config" "$dim_out"
         prepared_dim_configs[$dim_config_key]=1
     fi
+    IFS=$'\t' read -r batch_size_cfg epoch_cfg < <(get_train_meta "$dim_config")
 
-    log_file="$LOG_DIR/${model}_${dataset}_dim${dim_out}_delay${delay}_run${run_id}_pin.log"
-    desc="${model}/${dataset}/dim${dim_out}/delay${delay}/run${run_id}"
+    log_file="$LOG_DIR/${model}_${dataset}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}_delay${delay}_run${run_id}_pin.log"
+    desc="${model}/${dataset}/bs${batch_size_cfg}/memdim${dim_out}/ep${epoch_cfg}/delay${delay}/run${run_id}"
     cmd=(
         "$PYTHON_BIN" -u "$REPO_ROOT/train_non_timing.py"
         --data "$dataset"
@@ -201,7 +221,7 @@ for row in "${experiment_rows[@]}"; do
     fi
 
     echo "============================================================" >&2
-    echo "[${model} / ${dataset} / dim_out=${dim_out} / delay=${delay} / run=${run_id}/${repeats} / pin_memory=true / epoch=${target_epoch}]" >&2
+    echo "[${model} / ${dataset} / batch_size=${batch_size_cfg} / dim_out=${dim_out} / epoch=${epoch_cfg} / delay=${delay} / run=${run_id}/${repeats} / pin_memory=true]" >&2
     echo "config=$dim_config" >&2
     echo "log=$log_file" >&2
     echo "============================================================" >&2

@@ -17,7 +17,7 @@ import os
 import re
 from typing import Dict, List, Optional
 
-FILENAME_PATTERN = re.compile(r"^(.+?)_(.+?)_(nopin|pin)(?:_dim(\d+))?\.log$")
+FILENAME_PATTERN = re.compile(r"^(.+?)_(.+?)_(nopin|pin)_bs(\d+)_memdim(\d+)_ep(\d+)\.log$")
 
 LINE_PATTERNS = {
     "forward_ms": re.compile(r"\[rank\s+(\d+)\]\s+forward total\s*:\s*.*?avg=([\d.]+)ms"),
@@ -36,7 +36,14 @@ def parse_log(filepath: str) -> List[Dict[str, object]]:
         print(f"Skipping unrecognized file: {filename}")
         return []
 
-    model, dataset, pin_label, dim = m.group(1), m.group(2), m.group(3), m.group(4)
+    model, dataset, pin_label, batch_size, dim, epochs = (
+        m.group(1),
+        m.group(2),
+        m.group(3),
+        int(m.group(4)),
+        m.group(5),
+        int(m.group(6)),
+    )
     dim_value: Optional[int] = int(dim) if dim is not None else None
 
     with open(filepath, "r", encoding="utf-8") as f:
@@ -62,7 +69,9 @@ def parse_log(filepath: str) -> List[Dict[str, object]]:
             "model": model,
             "dataset": dataset,
             "pin_memory": pin_label,
+            "batch_size": batch_size,
             "dim": dim_value,
+            "epochs": epochs,
             "rank": rank,
             "log_file": filename,
         }
@@ -109,7 +118,9 @@ def main() -> None:
         "model",
         "dataset",
         "pin_memory",
+        "batch_size",
         "dim",
+        "epochs",
         "rank",
         "forward_ms",
         "memory_updater_ms",

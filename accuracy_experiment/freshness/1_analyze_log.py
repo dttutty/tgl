@@ -5,7 +5,7 @@ import re
 
 
 FILENAME_RE = re.compile(
-    r"^(?P<model>[^_]+)_(?P<dataset>[^_]+)_dim(?P<dim_out>\d+)_delay(?P<delay>\d+)_(?:run(?P<run_id>\d+)_)?pin\.log$"
+    r"^(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_memdim(?P<dim_out>\d+)_ep(?P<epochs>\d+)_delay(?P<delay>\d+)_(?:run(?P<run_id>\d+)_)?pin\.log$"
 )
 METRIC_RE = re.compile(r"test AP:([0-9.eE+-]+)\s+test (AUC|MRR):([0-9.eE+-]+)")
 
@@ -73,7 +73,9 @@ def main() -> None:
         writer.writerow([
             "model",
             "dataset",
+            "batch_size",
             "dim_out",
+            "epochs",
             "delay",
             "run_id",
             "test_ap",
@@ -86,7 +88,9 @@ def main() -> None:
             writer.writerow([
                 row["model"],
                 row["dataset"],
+                row["batch_size"],
                 row["dim_out"],
+                row["epochs"],
                 row["delay"],
                 row["run_id"],
                 row["test_ap"],

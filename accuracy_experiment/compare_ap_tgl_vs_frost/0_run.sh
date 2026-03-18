@@ -175,7 +175,7 @@ for raw_mem_dim in "${MEM_DIMS[@]}"; do
 
     for ((repeat_idx = 1; repeat_idx <= REPEATS; repeat_idx++)); do
         master_port=$((BASE_MASTER_PORT + run_idx))
-        log_file="$LOG_DIR/${MODEL}_${DATASET}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${EPOCHS}_rep${repeat_idx}.log"
+        log_file="$LOG_DIR/${MODEL}_${DATASET}_bs${BATCH_SIZE}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${EPOCHS}_rep${repeat_idx}.log"
         desc="${MODEL}/${DATASET}/memdim${mem_dim}/rep${repeat_idx}"
 
         cmd=(

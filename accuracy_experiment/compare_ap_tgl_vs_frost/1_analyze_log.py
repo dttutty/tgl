@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 
 FILENAME_PATTERN = re.compile(
-    r"^(?P<model>.+?)_(?P<dataset>.+?)_ngpu(?P<num_gpus>\d+)_memdim(?P<mem_dim>\d+)_ep(?P<epochs>\d+)_rep(?P<repeat>\d+)\.log$"
+    r"^(?P<model>.+?)_(?P<dataset>.+?)_bs(?P<batch_size>\d+)_ngpu(?P<num_gpus>\d+)_memdim(?P<mem_dim>\d+)_ep(?P<epochs>\d+)_rep(?P<repeat>\d+)\.log$"
 )
 TEST_AP_PATTERN = re.compile(r"test ap:([0-9]*\.?[0-9]+)", flags=re.IGNORECASE)
 TEST_AUC_PATTERN = re.compile(r"test auc:([0-9]*\.?[0-9]+)", flags=re.IGNORECASE)
@@ -39,6 +39,7 @@ def parse_one_log(log_path: Path, log_dir: Path) -> dict[str, object] | None:
         "run_tag": run_tag,
         "model": meta["model"],
         "dataset": meta["dataset"],
+        "batch_size": int(meta["batch_size"]),
         "num_gpus": int(meta["num_gpus"]),
         "mem_dim": int(meta["mem_dim"]),
         "epochs": int(meta["epochs"]),
@@ -57,6 +58,7 @@ def build_summary(rows: list[dict[str, object]]) -> list[dict[str, object]]:
             row["run_tag"],
             row["model"],
             row["dataset"],
+            row["batch_size"],
             row["num_gpus"],
             row["mem_dim"],
             row["epochs"],
@@ -73,9 +75,10 @@ def build_summary(rows: list[dict[str, object]]) -> list[dict[str, object]]:
                 "run_tag": key[0],
                 "model": key[1],
                 "dataset": key[2],
-                "num_gpus": key[3],
-                "mem_dim": key[4],
-                "epochs": key[5],
+                "batch_size": key[3],
+                "num_gpus": key[4],
+                "mem_dim": key[5],
+                "epochs": key[6],
                 "runs": len(group),
                 "mean_test_ap": f"{statistics.mean(ap_values):.6f}",
                 "std_test_ap": f"{statistics.stdev(ap_values):.6f}" if len(ap_values) > 1 else "0.000000",
@@ -128,7 +131,7 @@ def main() -> None:
         print("No valid AP results parsed from logs.")
         return
 
-    rows.sort(key=lambda row: (str(row["run_tag"]), int(row["mem_dim"]), int(row["repeat"])))
+    rows.sort(key=lambda row: (str(row["run_tag"]), int(row["batch_size"]), int(row["mem_dim"]), int(row["repeat"])))
     summary_rows = build_summary(rows)
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +144,7 @@ def main() -> None:
             "run_tag",
             "model",
             "dataset",
+            "batch_size",
             "num_gpus",
             "mem_dim",
             "epochs",
@@ -158,6 +162,7 @@ def main() -> None:
             "run_tag",
             "model",
             "dataset",
+            "batch_size",
             "num_gpus",
             "mem_dim",
             "epochs",
@@ -174,10 +179,10 @@ def main() -> None:
     print(f"Per-run results: {output}")
     print(f"Summary: {summary_output}")
     print("")
-    print("run_tag,mem_dim,runs,mean_test_ap,std_test_ap,min_test_ap,max_test_ap")
+    print("run_tag,batch_size,mem_dim,runs,mean_test_ap,std_test_ap,min_test_ap,max_test_ap")
     for row in summary_rows:
         print(
-            f"{row['run_tag']},{row['mem_dim']},{row['runs']},{row['mean_test_ap']},{row['std_test_ap']},{row['min_test_ap']},{row['max_test_ap']}"
+            f"{row['run_tag']},{row['batch_size']},{row['mem_dim']},{row['runs']},{row['mean_test_ap']},{row['std_test_ap']},{row['min_test_ap']},{row['max_test_ap']}"
         )
 
 

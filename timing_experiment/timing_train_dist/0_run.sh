@@ -45,6 +45,24 @@ DIM_OUTS=(128 256 384 512)
 MASTER_ADDR="127.0.0.1"
 BASE_MASTER_PORT="29550"
 
+get_train_meta() {
+  local cfg="$1"
+  "$PYTHON_BIN" - "$cfg" <<'PY'
+import sys
+import yaml
+
+cfg = sys.argv[1]
+with open(cfg, "r", encoding="utf-8") as f:
+    conf = yaml.safe_load(f)
+
+if "train" not in conf or not conf["train"]:
+    raise RuntimeError(f"No train section found in {cfg}")
+
+train = conf["train"][0]
+print(f"{int(train['batch_size'])}\t{int(train['epoch'])}")
+PY
+}
+
 make_dim_config() {
   local src_cfg="$1"
   local dst_cfg="$2"
@@ -80,13 +98,14 @@ for d_idx in "${!DATASETS[@]}"; do
       src_config="$REPO_ROOT/$config"
       dim_config="$TMP_CONFIG_DIR/${model}_dim${dim_out}.yml"
       make_dim_config "$src_config" "$dim_config" "$dim_out"
+      IFS=$'\t' read -r batch_size_cfg epoch_cfg < <(get_train_meta "$dim_config")
 
       for pin_label in "${PIN_MODES[@]}"; do
-        log_file="$LOG_DIR/${model}_${dataset}_${pin_label}_dim${dim_out}.log"
+        log_file="$LOG_DIR/${model}_${dataset}_${pin_label}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}.log"
         master_port=$((BASE_MASTER_PORT + run_idx))
 
         echo "============================================================"
-        echo "[${model} / ${dataset} / ${pin_label} / dim_out=${dim_out}]"
+        echo "[${model} / ${dataset} / ${pin_label} / batch_size=${batch_size_cfg} / dim_out=${dim_out} / epoch=${epoch_cfg}]"
         echo "log: ${log_file}"
         echo "master_port: ${master_port}"
         echo "============================================================"
