@@ -1,0 +1,21 @@
+name: tgl-blackwell-nccl
+# If conda reports a SafetyError for a cached dgl package, create with:
+#   CONDA_PKGS_DIRS=/tmp/conda_pkgs_fresh conda env create -f environment.blackwell-nccl.yml
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pybind11
+  - scikit-learn
+  # CUDA-enabled DGL package from conda-forge.
+  # This package depends on an older PyTorch, but the pip section below
+  # upgrades torch to the NCCL-safe stack that was validated on this machine.
+  - dgl=2.1.0=cuda120py310h00d5dd0_2
+  - pip:
+      - --index-url https://download.pytorch.org/whl/cu128
+      - --extra-index-url https://pypi.org/simple
+      - --find-links https://data.pyg.org/whl/torch-2.10.0+cu128.html
+      - torch==2.10.0+cu128
+      - torch-scatter==2.1.2+pt210cu128
+      - torchdata==0.9.0
