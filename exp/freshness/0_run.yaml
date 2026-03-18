@@ -1,0 +1,18 @@
+models:
+  - name: TGN
+    config: config/TGN.yml
+
+datasets:
+  - name: LASTFM
+    extra_args: "--rand_edge_features 128"
+
+delays:
+  - 1
+  - 2
+  - 3
+
+dim_outs:
+  - 128
+
+repeats: 10
+target_epoch: 100

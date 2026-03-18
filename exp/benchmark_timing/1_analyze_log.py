@@ -3,7 +3,7 @@
 Parse benchmark timing logs and generate a CSV.
 
 Usage:
-    python exp/benchmark_timing/parse.py [--log_dir exp/benchmark_timing/logs]
+    python exp/benchmark_timing/1_analyze_log.py [--log_dir exp/benchmark_timing/logs]
 
 Output:
     exp/benchmark_timing/results.csv

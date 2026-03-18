@@ -188,4 +188,4 @@ for raw_mem_dim in "${MEM_DIMS[@]}"; do
 done
 
 echo "All logs saved to ${LOG_DIR}"
-echo "Parse with: ${PYTHON_BIN} ${SCRIPT_DIR}/parse.py --log_dir ${LOG_DIR}"
+echo "Parse with: ${PYTHON_BIN} ${SCRIPT_DIR}/1_analyze_log.py --log_dir ${LOG_DIR}"

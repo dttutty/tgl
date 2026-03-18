@@ -2,8 +2,8 @@
 # Distributed timing benchmark runner for train_dist_timing.py.
 #
 # Usage examples:
-#   bash exp/train_dist_timing/run.sh
-#   bash exp/train_dist_timing/run.sh "0,1" 2 /home/sqp17/miniforge3/envs/simple_py310/bin/python
+#   bash exp/train_dist_timing/0_run.sh
+#   bash exp/train_dist_timing/0_run.sh "0,1" 2 /home/sqp17/miniforge3/envs/simple_py310/bin/python
 #
 # Positional args:
 #   1) CUDA_VISIBLE_DEVICES list (default: 0,1)
