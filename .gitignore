@@ -65,3 +65,4 @@ exp/benchmark_timing/tmp_configs/*
 *.png
 *.csv
 tmp_configs/
+models/
