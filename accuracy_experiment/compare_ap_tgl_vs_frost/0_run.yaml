@@ -11,6 +11,6 @@ mem_dims:
   - 256
   - 512
 
-repeats: 20
+repeats: 3
 target_epoch: 100
 batch_size: 600
