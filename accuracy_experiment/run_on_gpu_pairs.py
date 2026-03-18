@@ -21,6 +21,7 @@ ASSIGNED_GPU_PAIR_TOKEN = "__RUN_ON_GPU_PAIR_ASSIGNED_GPUS__"
 @dataclass
 class SchedulerConfig:
     max_concurrent_jobs: int = 16
+    max_jobs_per_gpu_pair: int = 8
     est_mem_per_job_mb: int = 5000
     min_free_mem_mb: int = 1500
     sched_poll_secs: int = 30
@@ -50,6 +51,7 @@ def load_config(config_path: Path) -> SchedulerConfig:
         raw = yaml.safe_load(f) or {}
     return SchedulerConfig(
         max_concurrent_jobs=int(raw.get("max_concurrent_jobs", 16)),
+        max_jobs_per_gpu_pair=int(raw.get("max_jobs_per_gpu_pair", 8)),
         est_mem_per_job_mb=int(raw.get("est_mem_per_job_mb", 5000)),
         min_free_mem_mb=int(raw.get("min_free_mem_mb", 1500)),
         sched_poll_secs=int(raw.get("sched_poll_secs", 30)),
@@ -169,6 +171,7 @@ def choose_gpu_pair(
     gpu_pairs: list[tuple[str, str]],
     pair_active_count: dict[str, int],
     max_concurrent_jobs: int,
+    max_jobs_per_gpu_pair: int,
     est_mem_per_job_mb: int,
     min_free_mem_mb: int,
     running_jobs: list[RunningJob],
@@ -182,7 +185,7 @@ def choose_gpu_pair(
 
     for pair in gpu_pairs:
         pair_key = ",".join(pair)
-        if pair_active_count.get(pair_key, 0) >= 1:
+        if pair_active_count.get(pair_key, 0) >= max_jobs_per_gpu_pair:
             continue
 
         free_left, free_right = pair_free_mems(pair)
@@ -245,14 +248,22 @@ def reap_finished_jobs(running_jobs: list[RunningJob], pair_active_count: dict[s
     return finished, failed
 
 
-def resolve_scheduler_settings(args, config: SchedulerConfig) -> tuple[list[str], int, int, int, int]:
+def resolve_scheduler_settings(args, config: SchedulerConfig) -> tuple[list[str], int, int, int, int, int]:
     gpus_arg = args.gpus if args.gpus else ",".join(detect_gpus(config.fallback_gpus))
     gpus = [gpu.strip() for gpu in gpus_arg.split(",") if gpu.strip()]
     max_concurrent_jobs = int(os.environ.get("MAX_CONCURRENT_JOBS", config.max_concurrent_jobs))
+    max_jobs_per_gpu_pair = int(os.environ.get("MAX_JOBS_PER_GPU_PAIR", config.max_jobs_per_gpu_pair))
     est_mem_per_job_mb = int(os.environ.get("EST_MEM_PER_JOB_MB", config.est_mem_per_job_mb))
     min_free_mem_mb = int(os.environ.get("MIN_FREE_MEM_MB", config.min_free_mem_mb))
     sched_poll_secs = int(os.environ.get("SCHED_POLL_SECS", config.sched_poll_secs))
-    return gpus, max_concurrent_jobs, est_mem_per_job_mb, min_free_mem_mb, sched_poll_secs
+    return (
+        gpus,
+        max_concurrent_jobs,
+        max_jobs_per_gpu_pair,
+        est_mem_per_job_mb,
+        min_free_mem_mb,
+        sched_poll_secs,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -275,15 +286,20 @@ def main() -> int:
         raise RuntimeError(f"Script not found: {script_path}")
 
     config = load_config(Path(__file__).with_name("run_on_gpu_pairs.yaml"))
-    gpus, max_concurrent_jobs, est_mem_per_job_mb, min_free_mem_mb, sched_poll_secs = resolve_scheduler_settings(
-        args, config
-    )
+    (
+        gpus,
+        max_concurrent_jobs,
+        max_jobs_per_gpu_pair,
+        est_mem_per_job_mb,
+        min_free_mem_mb,
+        sched_poll_secs,
+    ) = resolve_scheduler_settings(args, config)
     gpu_pairs = build_gpu_pairs(gpus)
     jobs = parse_jobs(str(script_path), script_args)
 
     print(f"Task script: {script_path}")
     print(f"GPU pairs: {' | '.join(','.join(pair) for pair in gpu_pairs)}")
-    print(f"Max concurrent jobs: {max_concurrent_jobs} (up to 1 per GPU pair)")
+    print(f"Max concurrent jobs: {max_concurrent_jobs} (up to {max_jobs_per_gpu_pair} per GPU pair)")
     print(f"Estimated mem/job per GPU: {est_mem_per_job_mb}MB")
     print(f"Min free mem reserve per GPU: {min_free_mem_mb}MB")
 
@@ -302,6 +318,7 @@ def main() -> int:
                 gpu_pairs,
                 pair_active_count,
                 max_concurrent_jobs,
+                max_jobs_per_gpu_pair,
                 est_mem_per_job_mb,
                 min_free_mem_mb,
                 running_jobs,
