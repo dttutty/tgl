@@ -97,8 +97,6 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
 def main() -> None:
     script_dir = Path(__file__).resolve().parent
     default_log_dir = script_dir / "logs"
-    if not default_log_dir.exists():
-        default_log_dir = script_dir / "log"
 
     parser = argparse.ArgumentParser(
         description="Parse compare_ap_tgl_vs_frost logs and summarize final test AP by mem_dim."
@@ -115,9 +113,9 @@ def main() -> None:
     if not log_dir.exists():
         raise SystemExit(f"log_dir does not exist: {log_dir}")
 
-    log_files = sorted(path for path in log_dir.rglob("*.log") if path.is_file())
+    log_files = sorted(path for path in log_dir.glob("*.log") if path.is_file())
     if not log_files:
-        print(f"No .log files found under {log_dir}")
+        print(f"No .log files found directly under {log_dir}")
         return
 
     rows: list[dict[str, object]] = []
