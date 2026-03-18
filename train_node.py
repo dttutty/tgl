@@ -12,6 +12,7 @@ parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--gpu', type=str, default='0', help='which GPU to use')
 parser.add_argument('--model', type=str, default='', help='name of stored model to load')
 parser.add_argument('--posneg', default=False, action='store_true', help='for positive negative detection, whether to sample negative nodes')
+parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
 args=parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
@@ -150,7 +151,11 @@ if not os.path.isfile('embs/' + emb_file_name):
         return ret.detach().cpu()
 
     emb = list()
-    for _, rows in tqdm(ldf.groupby(ldf.index // args.batch_size)):
+    emb_iter = tqdm(
+        ldf.groupby(ldf.index // args.batch_size),
+        total=(len(ldf) + args.batch_size - 1) // args.batch_size,
+    ) if args.tqdm else ldf.groupby(ldf.index // args.batch_size)
+    for _, rows in emb_iter:
         emb.append(get_node_emb(rows.node.values.astype(np.int32), rows.time.values.astype(np.float32)))
     emb = torch.cat(emb, dim=0)
     torch.save(emb, 'embs/' + emb_file_name)

@@ -19,6 +19,7 @@ parser.add_argument(
 parser.add_argument(
     "--rnd_ndim", type=int, default=128
 )  # if your dataset has no node features, set rnd_ndim > 0 to use random node features
+parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
 args=parser.parse_args()
 args.local_rank = 0
 if 'LOCAL_RANK' in os.environ:
@@ -554,7 +555,8 @@ else:
         total_steps = max(step_ids) + 1 if step_ids else 0
         
         # Process each step (each step contains args.num_gpus batches)
-        for step in tqdm(range(total_steps), desc="Eval batching"):
+        step_iter = tqdm(range(total_steps), desc='Eval batching') if args.tqdm else range(total_steps)
+        for step in step_iter:
             multi_mfgs = list()
             multi_root = list()
             multi_ts = list()
@@ -679,7 +681,8 @@ else:
         total_steps = max(step_ids) + 1 if step_ids else 0
         
         # Process each step (each step contains args.num_gpus batches)
-        for step in tqdm(range(total_steps), desc="Train batching"):
+        step_iter = tqdm(range(total_steps), desc='Train batching') if args.tqdm else range(total_steps)
+        for step in step_iter:
             t_tot_s = time.time()
             multi_mfgs = list()
             multi_root = list()

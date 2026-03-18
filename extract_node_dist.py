@@ -10,6 +10,7 @@ parser.add_argument('--model',  type=str, help='path to model file')
 parser.add_argument('--batch_size',  type=int, default=4000, help='batch size to generate node embeddings')
 parser.add_argument('--omp_num_threads', type=int, default=16)
 parser.add_argument("--local_rank", type=int, default=-1)
+parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
 args=parser.parse_args()
 
 # set which GPU to use
@@ -310,7 +311,11 @@ else:
 
     embs = list()
     multi_mfgs = list()
-    for _, rows in tqdm(ldf.groupby(ldf.index // args.batch_size)):
+    emb_iter = tqdm(
+        ldf.groupby(ldf.index // args.batch_size),
+        total=(len(ldf) + args.batch_size - 1) // args.batch_size,
+    ) if args.tqdm else ldf.groupby(ldf.index // args.batch_size)
+    for _, rows in emb_iter:
         root_nodes = rows.node.values.astype(np.int32)
         ts = rows.time.values.astype(np.float32)
         if args.data == 'MAG':

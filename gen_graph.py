@@ -7,6 +7,7 @@ from tqdm import tqdm
 parser=argparse.ArgumentParser()
 parser.add_argument('--data', type=str, help='dataset name')
 parser.add_argument('--add_reverse', default=False, action='store_true')
+parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
 args=parser.parse_args()
 
 df = pd.read_csv('DATA/{}/edges.csv'.format(args.data))
@@ -28,7 +29,8 @@ ext_full_indices = [[] for _ in range(num_nodes)]
 ext_full_ts = [[] for _ in range(num_nodes)]
 ext_full_eid = [[] for _ in range(num_nodes)]
 
-for idx, row in tqdm(df.iterrows(), total=len(df)):
+edge_iter = tqdm(df.iterrows(), total=len(df)) if args.tqdm else df.iterrows()
+for idx, row in edge_iter:
     src = int(row['src'])
     dst = int(row['dst'])
     if row['int_roll'] == 0:
@@ -58,7 +60,8 @@ for idx, row in tqdm(df.iterrows(), total=len(df)):
         ext_full_eid[dst].append(idx)
     # ext_full_indptr[src + 1:] += 1
 
-for i in tqdm(range(num_nodes)):
+node_iter = tqdm(range(num_nodes)) if args.tqdm else range(num_nodes)
+for i in node_iter:
     int_train_indptr[i + 1] = int_train_indptr[i] + len(int_train_indices[i])
     int_full_indptr[i + 1] = int_full_indptr[i] + len(int_full_indices[i])
     ext_full_indptr[i + 1] = ext_full_indptr[i] + len(ext_full_indices[i])
@@ -84,7 +87,8 @@ def tsort(i, indptr, indices, t, eid):
     t[beg:end] = t[beg:end][sidx]
     eid[beg:end] = eid[beg:end][sidx]
 
-for i in tqdm(range(int_train_indptr.shape[0] - 1)):
+sort_iter = tqdm(range(int_train_indptr.shape[0] - 1)) if args.tqdm else range(int_train_indptr.shape[0] - 1)
+for i in sort_iter:
     tsort(i, int_train_indptr, int_train_indices, int_train_ts, int_train_eid)
     tsort(i, int_full_indptr, int_full_indices, int_full_ts, int_full_eid)
     tsort(i, ext_full_indptr, ext_full_indices, ext_full_ts, ext_full_eid)

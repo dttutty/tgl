@@ -96,11 +96,14 @@ def write_csv(path: Path, rows: list[dict[str, object]], fieldnames: list[str]) 
 
 def main() -> None:
     script_dir = Path(__file__).resolve().parent
+    default_log_dir = script_dir / "logs"
+    if not default_log_dir.exists():
+        default_log_dir = script_dir / "log"
 
     parser = argparse.ArgumentParser(
         description="Parse compare_ap_tgl_vs_frost logs and summarize final test AP by mem_dim."
     )
-    parser.add_argument("--log_dir", type=Path, default=script_dir / "log")
+    parser.add_argument("--log_dir", type=Path, default=default_log_dir)
     parser.add_argument("--output", type=Path, default=None, help="Per-run parsed CSV path.")
     parser.add_argument("--summary_output", type=Path, default=None, help="Aggregated summary CSV path.")
     args = parser.parse_args()

@@ -28,6 +28,7 @@ if __name__ == '__main__':
     parser.add_argument('--config', type=str, help='path to config file')
     parser.add_argument('--batch_size', type=int, default=600, help='path to config file')
     parser.add_argument('--num_thread', type=int, default=64, help='number of thread')
+    parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
     args=parser.parse_args()
 
     df = pd.read_csv('DATA/{}/edges.csv'.format(args.data))
@@ -50,7 +51,11 @@ if __name__ == '__main__':
     uni_time = 0
     total_nodes = 0
     unique_nodes = 0
-    for _, rows in tqdm(df.groupby(df.index // args.batch_size), total=len(df) // args.batch_size):
+    row_iter = tqdm(
+        df.groupby(df.index // args.batch_size),
+        total=(len(df) + args.batch_size - 1) // args.batch_size,
+    ) if args.tqdm else df.groupby(df.index // args.batch_size)
+    for _, rows in row_iter:
         root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
         ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
         sampler.sample(root_nodes, ts)
