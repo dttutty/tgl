@@ -12,6 +12,7 @@ parser.add_argument(
 )
 parser.add_argument('--num_gpus', type=int, default=2, help='number of gpus to use')
 parser.add_argument('--omp_num_threads', type=int, default=8)
+parser.add_argument('--run_id', type=str, default=None, help='shared-memory namespace prefix for this run')
 parser.add_argument(
     "--rnd_edim", type=int, default=128
 )  # if your dataset has no edge features, set rnd_edim > 0 to use random edge features
@@ -67,7 +68,7 @@ def set_seed(seed):
 
 torch.distributed.init_process_group(backend='gloo', timeout=datetime.timedelta(0, 3600))
 
-run_id = init_run_id(args.local_rank, src_rank=0)
+run_id = init_run_id(args.local_rank, src_rank=0, provided_run_id=args.run_id)
 shm_name = build_shm_namer(run_id)
 
 nccl_group = None
@@ -757,4 +758,3 @@ else:
     torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
     end = time.time()
     print(f"Elapsed time: {end - start_time:.2f} seconds")
-

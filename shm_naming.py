@@ -3,10 +3,13 @@ import time
 import torch
 
 
-def init_run_id(local_rank: int, src_rank: int = 0) -> str:
+def init_run_id(local_rank: int, src_rank: int = 0, provided_run_id: str | None = None) -> str:
     run_id = [None]
     if local_rank == src_rank:
-        run_id[0] = f"run_{int(time.time())}"
+        if provided_run_id:
+            run_id[0] = provided_run_id
+        else:
+            run_id[0] = f"run_id_{time.time_ns()}"
     torch.distributed.broadcast_object_list(run_id, src=src_rank)
     return run_id[0]
 
