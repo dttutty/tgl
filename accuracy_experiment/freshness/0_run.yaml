@@ -7,13 +7,16 @@ datasets:
     extra_args: "--rand_edge_features 128"
 
 delays:
+  - 0
   - 1
   - 2
   - 3
 
 dim_outs:
   - 128
+  - 256
+  - 512
 
 batch_size: 600
-repeats: 10
+repeats: 3
 target_epoch: 100
