@@ -4,17 +4,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-RUNNER="$REPO_ROOT/experiments/run_on_gpu_pairs.py"
+RUNNER="$REPO_ROOT/accuracy_experiment/run_on_gpu_pairs.py"
+CONFIG_PATH="$SCRIPT_DIR/0_run.yaml"
 
 usage() {
     cat <<'EOF'
 Usage:
-  bash experiments/compare_ap_tgl_vs_frost/0_run.sh [GPU_IDS]
-  python experiments/run_on_gpu_pairs.py --script experiments/compare_ap_tgl_vs_frost/0_run.sh [--gpus 0,1,2,3]
+  bash accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh [GPU_IDS]
+  python accuracy_experiment/run_on_gpu_pairs.py --script accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh [--gpus 0,1,2,3]
 
 This script defines compare_ap_tgl_vs_frost jobs.
-When called normally, it delegates scheduling to experiments/run_on_gpu_pairs.py.
+When called normally, it delegates scheduling to accuracy_experiment/run_on_gpu_pairs.py.
 When called with --emit-jobs, it prints job definitions for the scheduler.
+Experiment settings are loaded from accuracy_experiment/compare_ap_tgl_vs_frost/0_run.yaml.
 Each emitted job always uses exactly 2 GPUs.
 EOF
 }
@@ -75,26 +77,18 @@ if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
 fi
 
 OMP_THREADS="${OMP_NUM_THREADS:-8}"
-MODEL="${MODEL:-TGN}"
-DATASET="${DATASET:-LASTFM}"
-EPOCHS="${EPOCHS:-100}"
-REPEATS="${REPEATS:-20}"
-BATCH_SIZE="${BATCH_SIZE:-4000}"
-MEM_DIMS_CSV="${MEM_DIMS:-128,256,512}"
 MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 BASE_MASTER_PORT="${BASE_MASTER_PORT:-29750}"
 RUN_TAG="${RUN_TAG:-$(date -u +%Y%m%d_%H%M%S)}"
 TASK_NUM_GPUS=2
 TORCH_PROC_PER_NODE=$((TASK_NUM_GPUS + 1))
+LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
+TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs/$RUN_TAG"
 
 if [[ -n "${NUM_GPUS:-}" && "${NUM_GPUS}" != "${TASK_NUM_GPUS}" ]]; then
     echo "NUM_GPUS is fixed to ${TASK_NUM_GPUS} for this script, got: ${NUM_GPUS}" >&2
     exit 1
 fi
-
-CONFIG_PATH="${CONFIG_PATH:-$REPO_ROOT/config/${MODEL}.yml}"
-LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
-TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs/$RUN_TAG"
 
 mkdir -p "$LOG_DIR" "$TMP_CONFIG_DIR"
 
@@ -107,20 +101,6 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
     echo "Config file not found: $CONFIG_PATH" >&2
     exit 1
 fi
-
-IFS=',' read -r -a MEM_DIMS <<< "$MEM_DIMS_CSV"
-
-get_dataset_extra_args() {
-    local dataset="$1"
-    case "$dataset" in
-        LASTFM|MOOC)
-            printf '%s\n' '--rnd_edim 128'
-            ;;
-        *)
-            printf '\n'
-            ;;
-    esac
-}
 
 make_experiment_config() {
     local src_cfg="$1"
@@ -151,62 +131,130 @@ with open(dst, "w", encoding="utf-8") as f:
 PY
 }
 
-extra_args="$(get_dataset_extra_args "$DATASET")"
-total_runs=$((REPEATS * ${#MEM_DIMS[@]}))
-run_idx=0
+load_experiment_rows() {
+    "$PYTHON_BIN" - "$CONFIG_PATH" <<'PY'
+import sys
+import yaml
+
+config_path = sys.argv[1]
+with open(config_path, "r", encoding="utf-8") as f:
+    conf = yaml.safe_load(f) or {}
+
+models = conf.get("models") or []
+datasets = conf.get("datasets") or []
+mem_dims = conf.get("mem_dims") or []
+repeats = int(conf.get("repeats", 1))
+target_epoch = int(conf.get("target_epoch", 1))
+batch_size = int(conf.get("batch_size", 1))
+
+if not models:
+    raise RuntimeError("0_run.yaml must define at least one model")
+if not datasets:
+    raise RuntimeError("0_run.yaml must define at least one dataset")
+if not mem_dims:
+    raise RuntimeError("0_run.yaml must define at least one mem_dim")
+
+for dataset in datasets:
+    dataset_name = dataset["name"]
+    extra_args = dataset.get("extra_args", "")
+    for model in models:
+        model_name = model["name"]
+        model_config = model["config"]
+        for mem_dim in mem_dims:
+            for repeat_idx in range(1, repeats + 1):
+                print(
+                    "\t".join(
+                        [
+                            model_name,
+                            model_config,
+                            dataset_name,
+                            extra_args,
+                            str(mem_dim),
+                            str(repeat_idx),
+                            str(repeats),
+                            str(target_epoch),
+                            str(batch_size),
+                        ]
+                    )
+                )
+PY
+}
+
+mapfile -t experiment_rows < <(load_experiment_rows)
+
+if [[ "${#experiment_rows[@]}" -eq 0 ]]; then
+    echo "No experiments generated from $CONFIG_PATH" >&2
+    exit 1
+fi
+
+first_row="${experiment_rows[0]}"
+IFS=$'\t' read -r _ _ _ _ _ _ REPEATS TARGET_EPOCH BATCH_SIZE <<< "$first_row"
 
 echo "Logs: $LOG_DIR" >&2
 echo "Tmp configs: $TMP_CONFIG_DIR" >&2
 echo "Python: $PYTHON_BIN" >&2
-echo "Model: $MODEL" >&2
-echo "Dataset: $DATASET" >&2
+echo "Config: $CONFIG_PATH" >&2
 echo "Task GPUs per job: $TASK_NUM_GPUS" >&2
 echo "Batch size: $BATCH_SIZE" >&2
-echo "Epochs: $EPOCHS" >&2
+echo "Epochs: $TARGET_EPOCH" >&2
 echo "Repeats: $REPEATS" >&2
-echo "Mem dims: ${MEM_DIMS[*]}" >&2
 echo "OMP threads: $OMP_THREADS" >&2
-echo "Total runs: $total_runs" >&2
+echo "Total runs: ${#experiment_rows[@]}" >&2
 
-for raw_mem_dim in "${MEM_DIMS[@]}"; do
-    mem_dim="${raw_mem_dim//[[:space:]]/}"
-    batch_config="$TMP_CONFIG_DIR/${MODEL}_${DATASET}_memdim${mem_dim}_ep${EPOCHS}_bs${BATCH_SIZE}.yml"
-    make_experiment_config "$CONFIG_PATH" "$batch_config" "$BATCH_SIZE" "$EPOCHS" "$mem_dim"
+declare -A prepared_batch_configs
+run_idx=0
 
-    for ((repeat_idx = 1; repeat_idx <= REPEATS; repeat_idx++)); do
-        master_port=$((BASE_MASTER_PORT + run_idx))
-        log_file="$LOG_DIR/${MODEL}_${DATASET}_bs${BATCH_SIZE}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${EPOCHS}_rep${repeat_idx}.log"
-        desc="${MODEL}/${DATASET}/memdim${mem_dim}/rep${repeat_idx}"
+for row in "${experiment_rows[@]}"; do
+    IFS=$'\t' read -r model config dataset extra mem_dim repeat_idx repeats target_epoch batch_size <<< "$row"
 
-        cmd=(
-            "$PYTHON_BIN" -u -m torch.distributed.run
-            --nproc_per_node "$TORCH_PROC_PER_NODE"
-            --master_addr "$MASTER_ADDR"
-            --master_port "$master_port"
-            "$REPO_ROOT/train_dist.py"
-            --dataset "$DATASET"
-            --config "$batch_config"
-            --num_gpus "$TASK_NUM_GPUS"
-            --omp_num_threads "$OMP_THREADS"
-        )
+    if [[ ! -f "$REPO_ROOT/$config" ]]; then
+        echo "Config file not found: $REPO_ROOT/$config" >&2
+        exit 1
+    fi
 
-        if [[ -n "$extra_args" ]]; then
-            read -r -a extra_parts <<< "$extra_args"
-            cmd+=("${extra_parts[@]}")
-        fi
+    extra_args=()
+    if [[ -n "$extra" ]]; then
+        read -r -a extra_args <<< "$extra"
+    fi
 
-        echo "============================================================" >&2
-        echo "[run $((run_idx + 1))/$total_runs] model=${MODEL} dataset=${DATASET} mem_dim=${mem_dim} repeat=${repeat_idx}/${REPEATS}" >&2
-        echo "config: ${batch_config}" >&2
-        echo "log: ${log_file}" >&2
-        echo "master_port: ${master_port}" >&2
-        echo "============================================================" >&2
+    batch_config_key="${model}:${config}:${batch_size}:${target_epoch}:${mem_dim}"
+    batch_config="$TMP_CONFIG_DIR/${model}_${dataset}_memdim${mem_dim}_ep${target_epoch}_bs${batch_size}.yml"
+    if [[ -z "${prepared_batch_configs[$batch_config_key]:-}" ]]; then
+        make_experiment_config "$REPO_ROOT/$config" "$batch_config" "$batch_size" "$target_epoch" "$mem_dim"
+        prepared_batch_configs[$batch_config_key]=1
+    fi
 
-        printf '%s\t%s\t' "$desc" "$log_file"
-        printf '%q ' "${cmd[@]}"
-        printf '\n'
-        echo "" >&2
+    master_port=$((BASE_MASTER_PORT + run_idx))
+    log_file="$LOG_DIR/${model}_${dataset}_bs${batch_size}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${target_epoch}_rep${repeat_idx}.log"
+    desc="${model}/${dataset}/bs${batch_size}/memdim${mem_dim}/ep${target_epoch}/rep${repeat_idx}"
 
-        run_idx=$((run_idx + 1))
-    done
+    cmd=(
+        "$PYTHON_BIN" -u -m torch.distributed.run
+        --nproc_per_node "$TORCH_PROC_PER_NODE"
+        --master_addr "$MASTER_ADDR"
+        --master_port "$master_port"
+        "$REPO_ROOT/train_dist.py"
+        --dataset "$dataset"
+        --config "$batch_config"
+        --num_gpus "$TASK_NUM_GPUS"
+        --omp_num_threads "$OMP_THREADS"
+    )
+
+    if [[ "${#extra_args[@]}" -gt 0 ]]; then
+        cmd+=("${extra_args[@]}")
+    fi
+
+    echo "============================================================" >&2
+    echo "[run $((run_idx + 1))/${#experiment_rows[@]}] model=${model} dataset=${dataset} batch_size=${batch_size} mem_dim=${mem_dim} epoch=${target_epoch} repeat=${repeat_idx}/${repeats}" >&2
+    echo "config: ${batch_config}" >&2
+    echo "log: ${log_file}" >&2
+    echo "master_port: ${master_port}" >&2
+    echo "============================================================" >&2
+
+    printf '%s\t%s\t' "$desc" "$log_file"
+    printf '%q ' "${cmd[@]}"
+    printf '\n'
+    echo "" >&2
+
+    run_idx=$((run_idx + 1))
 done

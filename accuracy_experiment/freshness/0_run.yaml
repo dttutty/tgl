@@ -14,5 +14,6 @@ delays:
 dim_outs:
   - 128
 
+batch_size: 600
 repeats: 10
 target_epoch: 100

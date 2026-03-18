@@ -1,0 +1,16 @@
+models:
+  - name: TGN
+    config: config/TGN.yml
+
+datasets:
+  - name: LASTFM
+    extra_args: "--rnd_edim 128"
+
+mem_dims:
+  - 128
+  - 256
+  - 512
+
+repeats: 20
+target_epoch: 100
+batch_size: 600

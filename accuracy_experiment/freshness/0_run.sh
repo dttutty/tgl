@@ -79,12 +79,20 @@ make_dim_config() {
     local src_cfg="$1"
     local dst_cfg="$2"
     local dim_out="$3"
+    local batch_size="$4"
+    local target_epoch="$5"
 
-    "$PYTHON_BIN" - "$src_cfg" "$dst_cfg" "$dim_out" "$TARGET_EPOCH" <<'PY'
+    "$PYTHON_BIN" - "$src_cfg" "$dst_cfg" "$dim_out" "$batch_size" "$target_epoch" <<'PY'
 import sys
 import yaml
 
-src, dst, dim_out, target_epoch = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+src, dst, dim_out, batch_size, target_epoch = (
+    sys.argv[1],
+    sys.argv[2],
+    int(sys.argv[3]),
+    int(sys.argv[4]),
+    int(sys.argv[5]),
+)
 with open(src, "r", encoding="utf-8") as f:
     conf = yaml.safe_load(f)
 
@@ -94,6 +102,7 @@ if "train" not in conf or not conf["train"]:
     raise RuntimeError(f"No train section found in {src}")
 
 conf["memory"][0]["dim_out"] = dim_out
+conf["train"][0]["batch_size"] = batch_size
 conf["train"][0]["epoch"] = target_epoch
 
 with open(dst, "w", encoding="utf-8") as f:
@@ -133,6 +142,7 @@ models = conf.get("models") or []
 datasets = conf.get("datasets") or []
 delays = conf.get("delays") or []
 dim_outs = conf.get("dim_outs") or []
+batch_size = int(conf.get("batch_size", 600))
 repeats = int(conf.get("repeats", 1))
 target_epoch = int(conf.get("target_epoch", 1))
 
@@ -164,6 +174,7 @@ for dataset in datasets:
                                 str(dim_out),
                                 str(delay),
                                 str(run_id),
+                                str(batch_size),
                                 str(repeats),
                                 str(target_epoch),
                             ]
@@ -180,27 +191,28 @@ if [[ "${#experiment_rows[@]}" -eq 0 ]]; then
 fi
 
 first_row="${experiment_rows[0]}"
-IFS=$'\t' read -r _ _ _ _ _ _ _ REPEATS TARGET_EPOCH <<< "$first_row"
+IFS=$'\t' read -r _ _ _ _ _ _ _ BATCH_SIZE_CFG REPEATS TARGET_EPOCH <<< "$first_row"
 
 echo "Logs: $LOG_DIR" >&2
 echo "Python: $PYTHON_BIN" >&2
 echo "Config: $CONFIG_PATH" >&2
+echo "Batch size per run: $BATCH_SIZE_CFG" >&2
 echo "Epoch per run: $TARGET_EPOCH" >&2
 echo "Repeats per experiment: $REPEATS" >&2
 
 declare -A prepared_dim_configs
 
 for row in "${experiment_rows[@]}"; do
-    IFS=$'\t' read -r model config dataset extra dim_out delay run_id repeats target_epoch <<< "$row"
+    IFS=$'\t' read -r model config dataset extra dim_out delay run_id batch_size repeats target_epoch <<< "$row"
     extra_args=()
     if [[ -n "$extra" ]]; then
         read -r -a extra_args <<< "$extra"
     fi
 
-    dim_config_key="${model}:${dim_out}"
-    dim_config="$TMP_CONFIG_DIR/${model}_dim${dim_out}.yml"
+    dim_config_key="${model}:${dim_out}:${batch_size}:${target_epoch}"
+    dim_config="$TMP_CONFIG_DIR/${model}_dim${dim_out}_bs${batch_size}_ep${target_epoch}.yml"
     if [[ -z "${prepared_dim_configs[$dim_config_key]:-}" ]]; then
-        make_dim_config "$REPO_ROOT/$config" "$dim_config" "$dim_out"
+        make_dim_config "$REPO_ROOT/$config" "$dim_config" "$dim_out" "$batch_size" "$target_epoch"
         prepared_dim_configs[$dim_config_key]=1
     fi
     IFS=$'\t' read -r batch_size_cfg epoch_cfg < <(get_train_meta "$dim_config")
