@@ -17,7 +17,7 @@ parser.add_argument(
     "--rnd_edim", type=int, default=128
 )  # if your dataset has no edge features, set rnd_edim > 0 to use random edge features
 parser.add_argument(
-    "--rnd_ndim", type=int, default=128
+    "--rnd_ndim", type=int, default=0
 )  # if your dataset has no node features, set rnd_ndim > 0 to use random node features
 parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
 args=parser.parse_args()
