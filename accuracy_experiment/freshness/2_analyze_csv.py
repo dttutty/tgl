@@ -7,18 +7,18 @@ import pandas as pd
 
 def main():
     parser = argparse.ArgumentParser(
-        description="统计 summary.tsv 中不同 dim_out / delay 的 AP、AUC 均值和方差（按 run 聚合）"
+        description="统计 summary.tsv 中不同 batch_size / dim_out / delay 的 AP、AUC 均值和方差（按 run 聚合）"
     )
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("/home/sqp17/Projects/frost/third_party/tgl/exp/freshness/logs/summary.tsv"),
+        default=Path("/home/sqp17/Projects/frost/third_party/tgl/accuracy_experiment/freshness/logs/summary.tsv"),
         help="summary.tsv 路径",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/home/sqp17/Projects/frost/third_party/tgl/exp/freshness/logs/summary_stats_by_dim_delay.tsv"),
+        default=Path("/home/sqp17/Projects/frost/third_party/tgl/accuracy_experiment/freshness/logs/summary_stats_by_dim_delay.tsv"),
         help="输出统计结果路径",
     )
     args = parser.parse_args()
@@ -32,9 +32,9 @@ def main():
     # 仅统计有有效指标的 run（通常 status=ok）
     valid = df.dropna(subset=["test_ap", "test_score"]).copy()
 
-    # 以 dim_out + delay 分组，统计 AP/AUC 的均值和方差（样本方差 ddof=1）
+    # 以 batch_size + dim_out + delay 分组，统计 AP/AUC 的均值和方差（样本方差 ddof=1）
     stats = (
-        valid.groupby(["dim_out", "delay"], as_index=False)
+        valid.groupby(["batch_size", "dim_out", "delay"], as_index=False)
         .agg(
             n_runs=("run_id", "count"),
             ap_mean=("test_ap", "mean"),
@@ -42,7 +42,7 @@ def main():
             auc_mean=("test_score", "mean"),
             auc_var=("test_score", "var"),
         )
-        .sort_values(["dim_out", "delay"])
+        .sort_values(["batch_size", "dim_out", "delay"])
     )
 
     # 保留 6 位小数，便于阅读
