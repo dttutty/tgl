@@ -220,7 +220,7 @@ for row in "${experiment_rows[@]}"; do
     log_file="$LOG_DIR/${model}_${dataset}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}_delay${delay}_run${run_id}_pin.log"
     desc="${model}/${dataset}/bs${batch_size_cfg}/memdim${dim_out}/ep${epoch_cfg}/delay${delay}/run${run_id}"
     cmd=(
-        "$PYTHON_BIN" -u "$REPO_ROOT/train_non_timing.py"
+        "$PYTHON_BIN" -u "$REPO_ROOT/train_non_timing_on_gpu.py"
         --data "$dataset"
         --config "$dim_config"
         --model_name "${model}_${dataset}_dim${dim_out}_delay${delay}_run${run_id}_pin"
