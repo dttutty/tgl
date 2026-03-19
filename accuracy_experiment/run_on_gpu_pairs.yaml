@@ -1,4 +1,5 @@
 max_concurrent_jobs: 16
+max_jobs_per_gpu_pair: 8
 est_mem_per_job_mb: 5000
 min_free_mem_mb: 1500
 sched_poll_secs: 30
