@@ -25,6 +25,7 @@ class SchedulerConfig:
     est_mem_per_job_mb: int = 5000
     min_free_mem_mb: int = 1500
     sched_poll_secs: int = 30
+    post_launch_wait_secs: int = 300
     fallback_gpus: str = "0,1"
 
 
@@ -55,6 +56,7 @@ def load_config(config_path: Path) -> SchedulerConfig:
         est_mem_per_job_mb=int(raw.get("est_mem_per_job_mb", 5000)),
         min_free_mem_mb=int(raw.get("min_free_mem_mb", 1500)),
         sched_poll_secs=int(raw.get("sched_poll_secs", 30)),
+        post_launch_wait_secs=int(raw.get("post_launch_wait_secs", 300)),
         fallback_gpus=str(raw.get("fallback_gpus", "0,1")),
     )
 
@@ -248,7 +250,26 @@ def reap_finished_jobs(running_jobs: list[RunningJob], pair_active_count: dict[s
     return finished, failed
 
 
-def resolve_scheduler_settings(args, config: SchedulerConfig) -> tuple[list[str], int, int, int, int, int]:
+def wait_after_launch(
+    gpu_pair: str,
+    post_launch_wait_secs: int,
+    poll_secs: int,
+    on_poll,
+) -> None:
+    sleep_step = max(1, poll_secs)
+    remaining = max(0, post_launch_wait_secs)
+    if remaining <= 0:
+        return
+    print(f"[WAIT] gpus={gpu_pair} hold scheduler for {remaining}s before allowing next launch")
+    while remaining > 0:
+        current_sleep = min(sleep_step, remaining)
+        time.sleep(current_sleep)
+        remaining -= current_sleep
+        on_poll()
+    print(f"[WAIT-DONE] gpus={gpu_pair} fixed post-launch wait completed")
+
+
+def resolve_scheduler_settings(args, config: SchedulerConfig) -> tuple[list[str], int, int, int, int, int, int]:
     gpus_arg = args.gpus if args.gpus else ",".join(detect_gpus(config.fallback_gpus))
     gpus = [gpu.strip() for gpu in gpus_arg.split(",") if gpu.strip()]
     max_concurrent_jobs = int(os.environ.get("MAX_CONCURRENT_JOBS", config.max_concurrent_jobs))
@@ -256,6 +277,7 @@ def resolve_scheduler_settings(args, config: SchedulerConfig) -> tuple[list[str]
     est_mem_per_job_mb = int(os.environ.get("EST_MEM_PER_JOB_MB", config.est_mem_per_job_mb))
     min_free_mem_mb = int(os.environ.get("MIN_FREE_MEM_MB", config.min_free_mem_mb))
     sched_poll_secs = int(os.environ.get("SCHED_POLL_SECS", config.sched_poll_secs))
+    post_launch_wait_secs = int(os.environ.get("POST_LAUNCH_WAIT_SECS", config.post_launch_wait_secs))
     return (
         gpus,
         max_concurrent_jobs,
@@ -263,6 +285,7 @@ def resolve_scheduler_settings(args, config: SchedulerConfig) -> tuple[list[str]
         est_mem_per_job_mb,
         min_free_mem_mb,
         sched_poll_secs,
+        post_launch_wait_secs,
     )
 
 
@@ -293,6 +316,7 @@ def main() -> int:
         est_mem_per_job_mb,
         min_free_mem_mb,
         sched_poll_secs,
+        post_launch_wait_secs,
     ) = resolve_scheduler_settings(args, config)
     gpu_pairs = build_gpu_pairs(gpus)
     jobs = parse_jobs(str(script_path), script_args)
@@ -302,6 +326,7 @@ def main() -> int:
     print(f"Max concurrent jobs: {max_concurrent_jobs} (up to {max_jobs_per_gpu_pair} per GPU pair)")
     print(f"Estimated mem/job per GPU: {est_mem_per_job_mb}MB")
     print(f"Min free mem reserve per GPU: {min_free_mem_mb}MB")
+    print(f"Post-launch wait: {post_launch_wait_secs}s")
 
     pair_active_count = {",".join(pair): 0 for pair in gpu_pairs}
     running_jobs: list[RunningJob] = []
@@ -309,11 +334,15 @@ def main() -> int:
     finished_jobs = 0
     failed_jobs = 0
 
+    def poll_running_jobs() -> None:
+        nonlocal finished_jobs, failed_jobs
+        finished_delta, failed_delta = reap_finished_jobs(running_jobs, pair_active_count)
+        finished_jobs += finished_delta
+        failed_jobs += failed_delta
+
     for job in jobs:
         while True:
-            finished_delta, failed_delta = reap_finished_jobs(running_jobs, pair_active_count)
-            finished_jobs += finished_delta
-            failed_jobs += failed_delta
+            poll_running_jobs()
             chosen_pair = choose_gpu_pair(
                 gpu_pairs,
                 pair_active_count,
@@ -328,6 +357,12 @@ def main() -> int:
                 pair_active_count[chosen_pair] = pair_active_count.get(chosen_pair, 0) + 1
                 started_jobs += 1
                 print(f"[START] gpus={chosen_pair} {job.desc}")
+                wait_after_launch(
+                    chosen_pair,
+                    post_launch_wait_secs,
+                    sched_poll_secs,
+                    poll_running_jobs,
+                )
                 break
             time.sleep(sched_poll_secs)
 
