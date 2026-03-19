@@ -5,7 +5,7 @@ import re
 
 
 FILENAME_RE = re.compile(
-    r"^(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_memdim(?P<dim_out>\d+)_ep(?P<epochs>\d+)_delay(?P<delay>\d+)_(?:run(?P<run_id>\d+)_)?pin\.log$"
+    r"^(?:(?P<username>[^_]+)_)?(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_memdim(?P<dim_out>\d+)_ep(?P<epochs>\d+)_delay(?P<delay>\d+)_(?:run(?P<run_id>\d+)_)?pin\.log$"
 )
 METRIC_RE = re.compile(r"test AP:([0-9.eE+-]+)\s+test (AUC|MRR):([0-9.eE+-]+)")
 

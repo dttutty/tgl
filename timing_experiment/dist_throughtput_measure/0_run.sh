@@ -23,6 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
 TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
 
 mkdir -p "$LOG_DIR" "$TMP_CONFIG_DIR"
 
@@ -105,7 +106,7 @@ for model in "${MODELS[@]}"; do
 
         for ((repeat_idx = 1; repeat_idx <= REPEATS; repeat_idx++)); do
           master_port=$((BASE_MASTER_PORT + run_idx))
-          log_file="$LOG_DIR/${model}_${dataset}_bs${batch_size}_ngpu${NUM_GPUS}_memdim${mem_dim}_ep${EPOCHS}_rep${repeat_idx}.log"
+          log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_bs${batch_size}_ngpu${NUM_GPUS}_memdim${mem_dim}_ep${EPOCHS}_rep${repeat_idx}.log"
 
           echo "============================================================"
           echo "[model=${model} dataset=${dataset} batch_size=${batch_size} mem_dim=${mem_dim} num_gpus=${NUM_GPUS} epochs=${EPOCHS} repeat=${repeat_idx}]"

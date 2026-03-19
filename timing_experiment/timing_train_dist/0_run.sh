@@ -25,6 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
 TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
 
 mkdir -p "$LOG_DIR" "$TMP_CONFIG_DIR"
 
@@ -101,7 +102,7 @@ for d_idx in "${!DATASETS[@]}"; do
       IFS=$'\t' read -r batch_size_cfg epoch_cfg < <(get_train_meta "$dim_config")
 
       for pin_label in "${PIN_MODES[@]}"; do
-        log_file="$LOG_DIR/${model}_${dataset}_${pin_label}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}.log"
+        log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_${pin_label}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}.log"
         master_port=$((BASE_MASTER_PORT + run_idx))
 
         echo "============================================================"

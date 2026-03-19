@@ -8,6 +8,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 TMP_CONFIG_DIR="$LOG_DIR/tmp_configs"
 CONFIG_PATH="$SCRIPT_DIR/0_run.yaml"
 RUNNER="$REPO_ROOT/exp/run_on_one_gpu.py"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
 
 usage() {
     cat <<'EOF'
@@ -217,7 +218,7 @@ for row in "${experiment_rows[@]}"; do
     fi
     IFS=$'\t' read -r batch_size_cfg epoch_cfg < <(get_train_meta "$dim_config")
 
-    log_file="$LOG_DIR/${model}_${dataset}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}_delay${delay}_run${run_id}_pin.log"
+    log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}_delay${delay}_run${run_id}_pin.log"
     desc="${model}/${dataset}/bs${batch_size_cfg}/memdim${dim_out}/ep${epoch_cfg}/delay${delay}/run${run_id}"
     cmd=(
         "$PYTHON_BIN" -u "$REPO_ROOT/train_non_timing_on_gpu.py"

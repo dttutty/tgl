@@ -17,7 +17,9 @@ import os
 import re
 from typing import Dict, List, Optional
 
-FILENAME_PATTERN = re.compile(r"^(.+?)_(.+?)_(nopin|pin)_bs(\d+)_memdim(\d+)_ep(\d+)\.log$")
+FILENAME_PATTERN = re.compile(
+    r"^(?:[^_]+_)?([^_]+)_([^_]+)_(nopin|pin)_bs(\d+)_memdim(\d+)_ep(\d+)\.log$"
+)
 
 LINE_PATTERNS = {
     "forward_ms": re.compile(r"\[rank\s+(\d+)\]\s+forward total\s*:\s*.*?avg=([\d.]+)ms"),

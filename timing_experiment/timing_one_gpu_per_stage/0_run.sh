@@ -9,6 +9,7 @@ GPU="${1:-0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
 
 mkdir -p "$LOG_DIR"
 
@@ -88,7 +89,7 @@ for d_idx in "${!DATASETS[@]}"; do
             for p_idx in "${!PIN_MODES[@]}"; do
                 pin_label="${PIN_MODES[$p_idx]}"
                 pin_flag="${PIN_FLAGS[$p_idx]}"
-                log_file="$LOG_DIR/${model}_${dataset}_${pin_label}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}.log"
+                log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_${pin_label}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}.log"
 
                 echo "============================================================"
                 echo "[${model} / ${dataset} / ${pin_label} / batch_size=${batch_size_cfg} / dim_out=${dim_out} / epoch=${epoch_cfg}] -> ${log_file}"

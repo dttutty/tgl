@@ -84,6 +84,7 @@ TASK_NUM_GPUS=2
 TORCH_PROC_PER_NODE=$((TASK_NUM_GPUS + 1))
 LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
 TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs/$RUN_TAG"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
 
 if [[ -n "${NUM_GPUS:-}" && "${NUM_GPUS}" != "${TASK_NUM_GPUS}" ]]; then
     echo "NUM_GPUS is fixed to ${TASK_NUM_GPUS} for this script, got: ${NUM_GPUS}" >&2
@@ -225,7 +226,7 @@ for row in "${experiment_rows[@]}"; do
     fi
 
     master_port=$((BASE_MASTER_PORT + run_idx))
-    log_file="$LOG_DIR/${model}_${dataset}_bs${batch_size}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${target_epoch}_rep${repeat_idx}.log"
+    log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_bs${batch_size}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${target_epoch}_rep${repeat_idx}.log"
     desc="${model}/${dataset}/bs${batch_size}/memdim${mem_dim}/ep${target_epoch}/rep${repeat_idx}"
 
     cmd=(
