@@ -18,5 +18,5 @@ dim_outs:
   - 256
 
 batch_size: 4000
-repeats: 3
+repeats: 8
 target_epoch: 100
