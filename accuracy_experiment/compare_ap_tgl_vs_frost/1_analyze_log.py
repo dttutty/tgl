@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 
 FILENAME_PATTERN = re.compile(
-    r"^(?:(?P<username>[^_]+)_)?(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_ngpu(?P<num_gpus>\d+)_memdim(?P<mem_dim>\d+)_ep(?P<epochs>\d+)_rep(?P<repeat>\d+)\.log$"
+    r"^(?:(?P<username>[^_]+)(?:_(?P<hostname>[^_]+))?_)?(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_ngpu(?P<num_gpus>\d+)_memdim(?P<mem_dim>\d+)_ep(?P<epochs>\d+)_rep(?P<repeat>\d+)\.log$"
 )
 TEST_AP_PATTERN = re.compile(r"test ap:([0-9]*\.?[0-9]+)", flags=re.IGNORECASE)
 TEST_AUC_PATTERN = re.compile(r"test auc:([0-9]*\.?[0-9]+)", flags=re.IGNORECASE)

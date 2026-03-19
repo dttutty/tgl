@@ -46,7 +46,7 @@ TEST_PATTERN = re.compile(
 
 # log filename: {MODEL}_{DATASET}_{pin_label}_bs{B}_memdim{N}_ep{E}.log
 FILENAME_PATTERN = re.compile(
-    r"^(?:[^_]+_)?([^_]+)_([^_]+)_(nopin|pin)_bs(\d+)_memdim(\d+)_ep(\d+)\.log$"
+    r"^(?:(?:[^_]+)(?:_[^_]+)?_)?([^_]+)_([^_]+)_(nopin|pin)_bs(\d+)_memdim(\d+)_ep(\d+)\.log$"
 )
 
 FIELDS = ["total", "sample", "fetch_feature", "fetch_memory", "forward", "backward", "memory_update"]

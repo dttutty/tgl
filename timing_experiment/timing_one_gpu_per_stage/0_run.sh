@@ -9,7 +9,7 @@ GPU="${1:-0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
-USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
 
 mkdir -p "$LOG_DIR"
 

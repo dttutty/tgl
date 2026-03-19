@@ -7,7 +7,7 @@ import pandas as pd
 
 
 FRESHNESS_LOG_RE = re.compile(
-    r"^(?:(?P<username>[^_]+)_)?(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_memdim(?P<dim_out>\d+)_ep(?P<epochs>\d+)_delay(?P<delay>\d+)_(?:run(?P<run_id>\d+)_)?pin\.log$"
+    r"^(?:(?P<username>[^_]+)(?:_(?P<hostname>[^_]+))?_)?(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_memdim(?P<dim_out>\d+)_ep(?P<epochs>\d+)_delay(?P<delay>\d+)_(?:run(?P<run_id>\d+)_)?pin\.log$"
 )
 
 

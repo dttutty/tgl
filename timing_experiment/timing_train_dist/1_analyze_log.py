@@ -18,7 +18,7 @@ import re
 from typing import Dict, List, Optional
 
 FILENAME_PATTERN = re.compile(
-    r"^(?:[^_]+_)?([^_]+)_([^_]+)_(nopin|pin)_bs(\d+)_memdim(\d+)_ep(\d+)\.log$"
+    r"^(?:(?:[^_]+)(?:_[^_]+)?_)?([^_]+)_([^_]+)_(nopin|pin)_bs(\d+)_memdim(\d+)_ep(\d+)\.log$"
 )
 
 LINE_PATTERNS = {

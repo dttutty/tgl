@@ -84,7 +84,7 @@ TASK_NUM_GPUS=2
 TORCH_PROC_PER_NODE=$((TASK_NUM_GPUS + 1))
 LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
 TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs/$RUN_TAG"
-USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
 
 if [[ -n "${NUM_GPUS:-}" && "${NUM_GPUS}" != "${TASK_NUM_GPUS}" ]]; then
     echo "NUM_GPUS is fixed to ${TASK_NUM_GPUS} for this script, got: ${NUM_GPUS}" >&2

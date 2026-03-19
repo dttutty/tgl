@@ -8,7 +8,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 TMP_CONFIG_DIR="$LOG_DIR/tmp_configs"
 CONFIG_PATH="$SCRIPT_DIR/0_run.yaml"
 RUNNER="$REPO_ROOT/exp/run_on_one_gpu.py"
-USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}}"
+USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
 
 usage() {
     cat <<'EOF'
