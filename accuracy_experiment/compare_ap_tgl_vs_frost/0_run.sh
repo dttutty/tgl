@@ -234,6 +234,7 @@ for row in "${experiment_rows[@]}"; do
         --master_addr "$MASTER_ADDR"
         --master_port "$master_port"
         "$REPO_ROOT/train_dist.py"
+        --seed "42"
         --dataset "$dataset"
         --config "$batch_config"
         --num_gpus "$TASK_NUM_GPUS"
