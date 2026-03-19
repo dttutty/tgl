@@ -36,7 +36,7 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-# set_seed(0)
+set_seed(42)
 
 sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
 print_run_configuration(
