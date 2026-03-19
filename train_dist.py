@@ -67,6 +67,9 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+if args.seed is not None:
+    set_seed(args.seed)
+
 sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
 print_run_configuration(
     args,
