@@ -27,6 +27,36 @@ That creates the project environment in `.venv`, installs the `sampler_core` ext
 uv sync --python 3.10 --extra plot
 ```
 
+### Runtime library setup
+
+Some clusters ship an older system `libstdc++.so.6` or do not expose `libssl.so.3` by default. Before running the project, source [`scripts/uv-env.sh`](scripts/uv-env.sh) so the shell can prepend compatible runtime-library directories to `LD_LIBRARY_PATH` when needed.
+
+```bash
+source scripts/uv-env.sh
+```
+
+The script is a no-op when the current environment already provides suitable libraries. It currently patches lookup paths for:
+
+- OpenSSL 3 (`libssl.so.3`, `libcrypto.so.3`)
+- `libstdc++.so.6` with at least `GLIBCXX_3.4.26` for the DGL wheel used by this repo
+
+If you run with deterministic PyTorch algorithms enabled, set the CuBLAS workspace mode before starting Python:
+
+```bash
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+```
+
+This avoids the CUDA-side deterministic-algorithm error raised by `torch.use_deterministic_algorithms(True)` when `nn.Linear` and other CuBLAS-backed ops execute on GPU.
+
+If you prefer activating the virtual environment explicitly instead of `uv run`, use:
+
+```bash
+source .venv/bin/activate
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+source scripts/uv-env.sh
+python train.py --data <NameOfYourDataset> --config <PathToConfigFile>
+```
+
 ### Blackwell / NCCL experiment stack
 
 The repository also contains a separate Blackwell-specific experiment stack in [`environment.blackwell-nccl.yml`](environment.blackwell-nccl.yml) and [`scripts/create_blackwell_nccl_env.sh`](scripts/create_blackwell_nccl_env.sh). That stack is not the default `uv` project environment above.
@@ -49,25 +79,26 @@ The provided configuration files are all tested to be working. If you want to us
 ## Run
 
 Currently, our framework only supports extrapolation setting (inference for the future).
+The commands below assume you have already run `export CUBLAS_WORKSPACE_CONFIG=:4096:8` in the current shell if you keep the default deterministic-training behavior in the provided scripts.
 
 ### Single GPU Link Prediction
->uv run python train.py --data \<NameOfYourDataset> --config \<PathToConfigFile>
+>source scripts/uv-env.sh && uv run python train.py --data \<NameOfYourDataset> --config \<PathToConfigFile>
 
 ### MultiGPU Link Prediction
->uv run python -m torch.distributed.run --nproc_per_node=\<NumberOfGPUs+1> train_dist.py --data \<NameOfYourDataset> --config \<PathToConfigFile> --num_gpus \<NumberOfGPUs>
+>source scripts/uv-env.sh && uv run python -m torch.distributed.run --nproc_per_node=\<NumberOfGPUs+1> train_dist.py --data \<NameOfYourDataset> --config \<PathToConfigFile> --num_gpus \<NumberOfGPUs>
 
 ### Dynamic Node Classification
 
 Currenlty, TGL only supports performing dynamic node classification using the dynamic node embedding generated in link prediction. 
 
 For Single GPU models, directly run
->uv run python train_node.py --data \<NameOfYourDATA> --config \<PathToConfigFile> --model \<PathToSavedModel>
+>source scripts/uv-env.sh && uv run python train_node.py --data \<NameOfYourDATA> --config \<PathToConfigFile> --model \<PathToSavedModel>
 
 For multi-GPU models, you need to first generate the dynamic node embedding
->uv run python -m torch.distributed.run --nproc_per_node=\<NumberOfGPUs+1> extract_node_dist.py --data \<NameOfYourDataset> --config \<PathToConfigFile> --num_gpus \<NumberOfGPUs> --model \<PathToSavedModel>
+>source scripts/uv-env.sh && uv run python -m torch.distributed.run --nproc_per_node=\<NumberOfGPUs+1> extract_node_dist.py --data \<NameOfYourDataset> --config \<PathToConfigFile> --num_gpus \<NumberOfGPUs> --model \<PathToSavedModel>
 
 After generating the node embeding for multi-GPU models, run
->uv run python train_node.py --data \<NameOfYourDATA> --model \<PathToSavedModel>
+>source scripts/uv-env.sh && uv run python train_node.py --data \<NameOfYourDATA> --model \<PathToSavedModel>
 
 ## Security
 
