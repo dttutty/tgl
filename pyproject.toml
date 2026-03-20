@@ -1,0 +1,55 @@
+[project]
+name = "tgl"
+version = "0.0.1"
+description = "Temporal Graph Learning experiments with a pybind11 sampler extension"
+readme = "README.md"
+authors = [
+    { name = "Hongkuan Zhou", email = "hongkuaz@usc.edu" },
+]
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "dgl==2.4.0+cu118",
+    "numpy==1.26.4",
+    "pandas==2.3.2",
+    "pyyaml==6.0.2",
+    "scikit-learn==1.7.1",
+    "torch==2.2.2",
+    "torch-scatter==2.1.2+pt22cu118",
+    # DGL imports graphbolt modules that rely on torchdata at import time.
+    "torchdata==0.7.1",
+    "tqdm==4.67.1",
+]
+
+[project.optional-dependencies]
+plot = [
+    "matplotlib",
+]
+
+[build-system]
+requires = ["setuptools>=82,<83", "wheel", "pybind11==3.0.1"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu118" }
+torch-scatter = { index = "pyg-cu118-pt22" }
+dgl = { index = "dgl-cu118" }
+
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[[tool.uv.index]]
+name = "pyg-cu118-pt22"
+url = "https://data.pyg.org/whl/torch-2.2.0+cu118.html"
+format = "flat"
+explicit = true
+
+[[tool.uv.index]]
+name = "dgl-cu118"
+url = "https://data.dgl.ai/wheels/torch-2.4/cu118/repo.html"
+format = "flat"
+explicit = true

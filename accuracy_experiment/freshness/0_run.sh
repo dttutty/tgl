@@ -9,20 +9,35 @@ REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
 TMP_CONFIG_DIR="$LOG_DIR/tmp_configs"
 CONFIG_PATH="$SCRIPT_DIR/0_run.yaml"
-RUNNER="$REPO_ROOT/exp/run_on_one_gpu.py"
+RUNNER="$REPO_ROOT/accuracy_experiment/run_on_one_gpu.py"
 USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
 
 usage() {
     cat <<'EOF'
 Usage:
-  bash exp/freshness/0_run.sh [GPU_IDS]
-  python exp/run_on_one_gpu.py --script exp/freshness/0_run.sh [--gpus 0,1]
+  bash accuracy_experiment/freshness/0_run.sh [GPU_IDS]
+  uv run python accuracy_experiment/run_on_one_gpu.py --script accuracy_experiment/freshness/0_run.sh [--gpus 0,1]
 
 This script defines freshness experiment jobs.
-When called normally, it delegates scheduling to exp/run_on_one_gpu.py.
+When called normally, it delegates scheduling to accuracy_experiment/run_on_one_gpu.py.
 When called with --emit-jobs, it prints job definitions for the scheduler.
-Experiment settings are loaded from exp/freshness/0_run.yaml.
+Experiment settings are loaded from accuracy_experiment/freshness/0_run.yaml.
 EOF
+}
+
+resolve_python_bin() {
+    if [[ -n "${PYTHON_BIN:-}" ]]; then
+        printf '%s\n' "$PYTHON_BIN"
+    elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+        printf '%s\n' "${REPO_ROOT}/.venv/bin/python"
+    elif command -v python >/dev/null 2>&1; then
+        command -v python
+    elif command -v python3 >/dev/null 2>&1; then
+        command -v python3
+    else
+        echo "Python interpreter not found." >&2
+        exit 1
+    fi
 }
 
 EMIT_JOBS=0
@@ -56,15 +71,7 @@ if [[ "$EMIT_JOBS" -eq 0 ]]; then
     exec "$RUNNER" "${runner_args[@]}"
 fi
 
-if [[ -n "${PYTHON_BIN:-}" ]]; then
-    PYTHON_BIN="$PYTHON_BIN"
-elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python)"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python3)"
-else
-    PYTHON_BIN="/home/sqp17/miniconda3/envs/simple_py310/bin/python"
-fi
+PYTHON_BIN="$(resolve_python_bin)"
 
 mkdir -p "$LOG_DIR" "$TMP_CONFIG_DIR"
 

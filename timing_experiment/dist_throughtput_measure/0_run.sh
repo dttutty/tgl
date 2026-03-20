@@ -6,7 +6,6 @@ export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 GPU_LIST="${1:-0,1}"
 NUM_GPUS="${2:-2}"
-PYTHON_BIN="${3:-python}"
 
 OMP_THREADS="${OMP_NUM_THREADS:-8}"
 EPOCHS="${EPOCHS:-5}"
@@ -26,6 +25,24 @@ REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
 TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs"
 USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
+
+resolve_python_bin() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    printf '%s\n' "$PYTHON_BIN"
+  elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+    printf '%s\n' "${REPO_ROOT}/.venv/bin/python"
+  elif command -v python >/dev/null 2>&1; then
+    command -v python
+  elif command -v python3 >/dev/null 2>&1; then
+    command -v python3
+  else
+    echo "Python interpreter not found." >&2
+    exit 1
+  fi
+}
+
+PYTHON_BIN="${3:-${PYTHON_BIN:-}}"
+PYTHON_BIN="$(resolve_python_bin)"
 
 mkdir -p "$LOG_DIR" "$TMP_CONFIG_DIR"
 

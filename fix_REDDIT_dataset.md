@@ -1,4 +1,4 @@
-(simple_py310) sqp17@sun:~/Projects/frost/third_party/tgl$ python check_if_reverse_added.py --data REDDIT
+(.venv) sqp17@sun:~/Projects/frost/third_party/tgl$ uv run python check_if_reverse_added.py --data REDDIT
 dataset: REDDIT
 graph: DATA/REDDIT/ext_full.npz
 graph_type: ext_full
@@ -20,7 +20,7 @@ missing_reverse_edges: 27512
   eid=114, src=103, dst=10063, time=520.9209999999999
 
 We regenerated, now:
-(simple_py310) sqp17@sun:~/Projects/frost/third_party/tgl$ python check_if_reverse_added.py --data REDDIT
+(.venv) sqp17@sun:~/Projects/frost/third_party/tgl$ uv run python check_if_reverse_added.py --data REDDIT
 dataset: REDDIT
 graph: DATA/REDDIT/ext_full.npz
 graph_type: ext_full

@@ -13,6 +13,23 @@ REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
 USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
 
+resolve_python_bin() {
+    if [[ -n "${PYTHON_BIN:-}" ]]; then
+        printf '%s\n' "$PYTHON_BIN"
+    elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+        printf '%s\n' "${REPO_ROOT}/.venv/bin/python"
+    elif command -v python >/dev/null 2>&1; then
+        command -v python
+    elif command -v python3 >/dev/null 2>&1; then
+        command -v python3
+    else
+        echo "Python interpreter not found." >&2
+        exit 1
+    fi
+}
+
+PYTHON_BIN="$(resolve_python_bin)"
+
 mkdir -p "$LOG_DIR"
 
 MODELS=("JODIE" )
@@ -38,7 +55,7 @@ mkdir -p "$TMP_CONFIG_DIR"
 
 get_train_meta() {
     local cfg="$1"
-    python - "$cfg" <<'PY'
+    "$PYTHON_BIN" - "$cfg" <<'PY'
 import sys
 import yaml
 
@@ -58,7 +75,7 @@ make_dim_config() {
     local src_cfg="$1"
     local dst_cfg="$2"
     local dim_out="$3"
-    python - "$src_cfg" "$dst_cfg" "$dim_out" <<'PY'
+    "$PYTHON_BIN" - "$src_cfg" "$dst_cfg" "$dim_out" <<'PY'
 import sys
 import yaml
 
@@ -97,7 +114,7 @@ for d_idx in "${!DATASETS[@]}"; do
                 echo "[${model} / ${dataset} / ${pin_label} / batch_size=${batch_size_cfg} / dim_out=${dim_out} / epoch=${epoch_cfg}] -> ${log_file}"
                 echo "============================================================"
 
-                python "$REPO_ROOT/train.py" \
+                "$PYTHON_BIN" "$REPO_ROOT/train.py" \
                     --data "$dataset" \
                     --config "$dim_config" \
                     --gpu "$GPU" \

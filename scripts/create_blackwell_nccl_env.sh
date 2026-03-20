@@ -14,39 +14,62 @@ set -euo pipefail
 # this Blackwell workstation. The combination below was validated locally and
 # gets past the old crash point with NCCL.
 
-ENV_DIR="${ENV_DIR:-/tmp/tgl_t210_nccl}"
-SRC_DGL_ENV="${SRC_DGL_ENV:-/home/sqp17/miniforge3/envs/simple_py310}"
-
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "${REPO_DIR}/scripts/uv-env.sh"
+ENV_DIR="${ENV_DIR:-${REPO_DIR}/.venv-blackwell}"
+PYTHON_REQ="${PYTHON_REQ:-3.10}"
+SRC_DGL_PYTHON="${SRC_DGL_PYTHON:-}"
 
-if [[ ! -x "${SRC_DGL_ENV}/bin/python" ]]; then
-  echo "Source DGL environment not found: ${SRC_DGL_ENV}" >&2
-  echo "Set SRC_DGL_ENV to an env that already contains CUDA-enabled dgl." >&2
+resolve_source_dgl_python() {
+  if [[ -n "${SRC_DGL_PYTHON}" ]]; then
+    printf '%s\n' "${SRC_DGL_PYTHON}"
+    return
+  fi
+
+  if ! command -v python >/dev/null 2>&1; then
+    echo "Could not find a source Python for DGL bootstrap." >&2
+    echo "Set SRC_DGL_PYTHON to a Python 3.10 executable that already imports CUDA-enabled dgl." >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$(command -v python)"
+}
+
+SRC_DGL_PYTHON="$(resolve_source_dgl_python)"
+
+if [[ ! -x "${SRC_DGL_PYTHON}" ]]; then
+  echo "Source DGL Python not found: ${SRC_DGL_PYTHON}" >&2
   exit 1
 fi
 
-# Reuse the source env's Python ABI so the copied DGL wheel stays compatible.
-BOOTSTRAP_PYTHON="${SRC_DGL_ENV}/bin/python"
-
-echo "Creating venv at ${ENV_DIR}"
-"${BOOTSTRAP_PYTHON}" -m venv "${ENV_DIR}"
+echo "Syncing uv environment"
+uv venv --python "${PYTHON_REQ}" "${ENV_DIR}"
 
 PYTHON_BIN="${ENV_DIR}/bin/python"
-PIP_BIN=("${PYTHON_BIN}" -m pip)
 
-echo "Upgrading pip/setuptools/wheel"
-"${PIP_BIN[@]}" install --upgrade pip setuptools wheel
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "uv did not create the destination environment: ${ENV_DIR}" >&2
+  exit 1
+fi
 
-echo "Installing torch 2.10.0 + CUDA 12.8"
-"${PIP_BIN[@]}" install \
-  torch==2.10.0+cu128 \
-  --index-url https://download.pytorch.org/whl/cu128
+if [[ "$(readlink -f "${SRC_DGL_PYTHON}")" == "$(readlink -f "${PYTHON_BIN}")" ]]; then
+  echo "Source and destination Python are the same: ${PYTHON_BIN}" >&2
+  echo "Activate the old working env first, or set SRC_DGL_PYTHON explicitly." >&2
+  exit 1
+fi
 
-echo "Installing Python dependencies"
-"${PIP_BIN[@]}" install \
+echo "Installing the Blackwell/NCCL Python stack"
+uv pip install --python "${PYTHON_BIN}" \
+  --index-url https://download.pytorch.org/whl/cu128 \
+  torch==2.10.0+cu128
+
+uv pip install --python "${PYTHON_BIN}" \
+  --extra-index-url https://pypi.org/simple \
+  --find-links https://data.pyg.org/whl/torch-2.10.0+cu128.html \
   numpy \
-  pandas \
   packaging \
+  pandas \
   psutil \
   pybind11 \
   pydantic \
@@ -54,12 +77,29 @@ echo "Installing Python dependencies"
   requests \
   scikit-learn \
   scipy \
-  torch-scatter \
+  setuptools \
+  torch-scatter==2.1.2+pt210cu128 \
   torchdata==0.9.0 \
-  tqdm \
-  -f https://data.pyg.org/whl/torch-2.10.0+cu128.html
+  tqdm
 
-SRC_SITE_PACKAGES="$("${SRC_DGL_ENV}/bin/python" - <<'PY'
+echo "Checking source DGL environment"
+"${SRC_DGL_PYTHON}" - <<'PY'
+import sys
+
+if sys.version_info[:2] != (3, 10):
+    raise SystemExit(
+        "This script expects the source DGL environment to use Python 3.10."
+    )
+
+try:
+    import dgl  # noqa: F401
+except Exception as exc:
+    raise SystemExit(
+        "Source Python cannot import dgl. Set SRC_DGL_PYTHON to a working env."
+    ) from exc
+PY
+
+SRC_SITE_PACKAGES="$("${SRC_DGL_PYTHON}" - <<'PY'
 import site
 paths = [p for p in site.getsitepackages() if p.endswith("site-packages")]
 if not paths:
@@ -86,23 +126,26 @@ if sys.version_info[:2] != (3, 10):
 PY
 
 SRC_DGL_DIR="${SRC_SITE_PACKAGES}/dgl"
-SRC_DGL_DIST_INFO="$(find "${SRC_SITE_PACKAGES}" -maxdepth 1 -type d -name 'dgl-*.dist-info' | head -n 1)"
+SRC_DGL_METADATA_DIR="$(
+  find "${SRC_SITE_PACKAGES}" -maxdepth 1 -type d \( -name 'dgl-*.dist-info' -o -name 'dgl-*.egg-info' \) | head -n 1
+)"
 
 if [[ ! -d "${SRC_DGL_DIR}" ]]; then
   echo "Could not find ${SRC_DGL_DIR}" >&2
   exit 1
 fi
 
-if [[ -z "${SRC_DGL_DIST_INFO}" ]]; then
-  echo "Could not find dgl-*.dist-info under ${SRC_SITE_PACKAGES}" >&2
+if [[ -z "${SRC_DGL_METADATA_DIR}" ]]; then
+  echo "Could not find dgl metadata under ${SRC_SITE_PACKAGES}" >&2
   exit 1
 fi
 
-echo "Copying CUDA-enabled DGL from ${SRC_DGL_ENV}"
+echo "Copying CUDA-enabled DGL from ${SRC_DGL_PYTHON}"
 rm -rf "${DST_SITE_PACKAGES}/dgl"
 find "${DST_SITE_PACKAGES}" -maxdepth 1 -type d -name 'dgl-*.dist-info' -exec rm -rf {} +
+find "${DST_SITE_PACKAGES}" -maxdepth 1 -type d -name 'dgl-*.egg-info' -exec rm -rf {} +
 cp -a "${SRC_DGL_DIR}" "${DST_SITE_PACKAGES}/"
-cp -a "${SRC_DGL_DIST_INFO}" "${DST_SITE_PACKAGES}/"
+cp -a "${SRC_DGL_METADATA_DIR}" "${DST_SITE_PACKAGES}/"
 
 echo "Building sampler_core extension in-place"
 (
@@ -131,7 +174,7 @@ Environment is ready.
 Activate:
   source "${ENV_DIR}/bin/activate"
 
-Run:
+Distributed run:
   CUDA_VISIBLE_DEVICES=0,1 \\
   CUDA_LAUNCH_BLOCKING=1 \\
   TORCH_SHOW_CPP_STACKTRACES=1 \\

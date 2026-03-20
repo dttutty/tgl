@@ -3,12 +3,12 @@
 #
 # Usage examples:
 #   bash exp/train_dist_timing/0_run.sh
-#   bash exp/train_dist_timing/0_run.sh "0,1" 2 /home/sqp17/miniforge3/envs/simple_py310/bin/python
+#   bash exp/train_dist_timing/0_run.sh "0,1" 2 .venv/bin/python
 #
 # Positional args:
 #   1) CUDA_VISIBLE_DEVICES list (default: 0,1)
 #   2) num_gpus workers (default: 2)
-#   3) python executable (default: python)
+#   3) python executable (default: repo .venv/bin/python, then PATH python)
 #
 # Notes:
 # - train_dist_timing.py currently always uses pinned buffers internally,
@@ -20,7 +20,6 @@ export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
 GPU_LIST="${1:-0,1}"
 NUM_GPUS="${2:-2}"
-PYTHON_BIN="${3:-python}"
 OMP_THREADS="${OMP_NUM_THREADS:-8}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,6 +27,24 @@ REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 LOG_DIR="$SCRIPT_DIR/logs"
 TMP_CONFIG_DIR="$SCRIPT_DIR/tmp_configs"
 USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
+
+resolve_python_bin() {
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    printf '%s\n' "$PYTHON_BIN"
+  elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+    printf '%s\n' "${REPO_ROOT}/.venv/bin/python"
+  elif command -v python >/dev/null 2>&1; then
+    command -v python
+  elif command -v python3 >/dev/null 2>&1; then
+    command -v python3
+  else
+    echo "Python interpreter not found." >&2
+    exit 1
+  fi
+}
+
+PYTHON_BIN="${3:-${PYTHON_BIN:-}}"
+PYTHON_BIN="$(resolve_python_bin)"
 
 mkdir -p "$LOG_DIR" "$TMP_CONFIG_DIR"
 

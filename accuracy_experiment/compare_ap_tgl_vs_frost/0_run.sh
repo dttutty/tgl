@@ -26,6 +26,8 @@ EOF
 resolve_python_bin() {
     if [[ -n "${PYTHON_BIN:-}" ]]; then
         printf '%s\n' "$PYTHON_BIN"
+    elif [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+        printf '%s\n' "${REPO_ROOT}/.venv/bin/python"
     elif command -v python >/dev/null 2>&1; then
         command -v python
     elif command -v python3 >/dev/null 2>&1; then
