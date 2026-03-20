@@ -8,6 +8,7 @@ parser.add_argument('--config', type=str, help='path to config file')
 parser.add_argument('--gpu', type=str, default='0', help='which GPU to use')
 parser.add_argument('--model_name', type=str, default='', help='name of stored model')
 parser.add_argument('--use_inductive', action='store_true')
+parser.add_argument('--seed', nargs='?', type=int, const=42, default=None, help='set random seed; defaults to 42 if the flag is provided without a value')
 parser.add_argument('--rand_edge_features', type=int, default=0, help='use random edge featrues')
 parser.add_argument('--rand_node_features', type=int, default=0, help='use random node featrues')
 parser.add_argument('--eval_neg_samples', type=int, default=1, help='how many negative samples to use at inference. Note: this will change the metric of test set to AP+AUC to AP+MRR!')
@@ -22,7 +23,6 @@ os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
 import torch
 import time
-import random
 import dgl
 import numpy as np
 from modules import *
@@ -30,16 +30,8 @@ from sampler import *
 from utils import *
 from sklearn.metrics import average_precision_score, roc_auc_score
 
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-set_seed(42)
+if args.seed is not None:
+    set_seed(args.seed)
 
 sample_param, memory_param, gnn_param, train_param = parse_config(args.config)
 print_run_configuration(

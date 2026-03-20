@@ -161,7 +161,6 @@ def launch_job(spec: JobSpec, gpu: str) -> RunningJob:
     log_handle = log_path.open("w", encoding="utf-8")
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = gpu
-    env.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,

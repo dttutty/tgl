@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-export CUBLAS_WORKSPACE_CONFIG=:4096:8
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 RUNNER="$REPO_ROOT/accuracy_experiment/run_on_gpu_pairs.py"

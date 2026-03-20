@@ -8,7 +8,8 @@ parser=argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, help='dataset name')
 parser.add_argument('--config', type=str, help='path to config file')
 parser.add_argument(
-    "--seed", action="store_const", const=42, default=None, help="set random seed"
+    '--seed', nargs='?', type=int, const=42, default=None,
+    help='set random seed; defaults to 42 if the flag is provided without a value'
 )
 parser.add_argument('--num_gpus', type=int, default=2, help='number of gpus to use')
 parser.add_argument('--omp_num_threads', type=int, default=8)
@@ -45,7 +46,6 @@ os.environ['MKL_NUM_THREADS'] = str(args.omp_num_threads)
 import torch
 import dgl
 import datetime
-import random
 import math
 import threading
 import numpy as np
@@ -59,16 +59,6 @@ from df_split import make_balance_plan
 from shm_naming import init_run_id, build_shm_namer
 import torch.distributed as dist # 确保已有或添加
 from torch.profiler import profile, record_function, ProfilerActivity # 新增
-
-        
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 if args.seed is not None:
     set_seed(args.seed)

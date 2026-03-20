@@ -5,8 +5,6 @@
 
 set -e
 
-export CUBLAS_WORKSPACE_CONFIG=:4096:8
-
 GPU="${1:-0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"

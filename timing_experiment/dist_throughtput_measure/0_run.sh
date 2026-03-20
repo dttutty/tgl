@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-export CUBLAS_WORKSPACE_CONFIG=:4096:8
-
 GPU_LIST="${1:-0,1}"
 NUM_GPUS="${2:-2}"
 

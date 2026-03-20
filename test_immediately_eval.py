@@ -22,22 +22,12 @@ os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
 import torch
 import time
-import random
 import dgl
 import numpy as np
 from modules import *
 from sampler import *
 from utils import *
 from sklearn.metrics import average_precision_score, roc_auc_score
-
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 def sync_cuda():
     if torch.cuda.is_available():

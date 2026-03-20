@@ -1,5 +1,6 @@
 import torch
 import os
+import random
 import yaml
 import dgl
 import time
@@ -23,6 +24,12 @@ def _yaml_block(data):
         allow_unicode=True,
     )
     return dumped.rstrip() if dumped else ''
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 def load_feat(d, rand_de, rand_dn):
     node_feats = None

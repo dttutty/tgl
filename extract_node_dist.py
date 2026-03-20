@@ -4,7 +4,7 @@ import os
 parser=argparse.ArgumentParser()
 parser.add_argument('--data', type=str, help='dataset name')
 parser.add_argument('--config', type=str, help='path to config file')
-parser.add_argument('--seed', type=int, default=0, help='random seed to use')
+parser.add_argument('--seed', nargs='?', type=int, const=42, default=None, help='set random seed; defaults to 42 if the flag is provided without a value')
 parser.add_argument('--num_gpus', type=int, default=4, help='number of gpus to use')
 parser.add_argument('--model',  type=str, help='path to model file')
 parser.add_argument('--batch_size',  type=int, default=4000, help='batch size to generate node embeddings')
@@ -23,7 +23,6 @@ os.environ['MKL_NUM_THREADS'] = str(args.omp_num_threads)
 
 import torch
 import dgl
-import random
 import math
 import hashlib
 import numpy as np
@@ -35,16 +34,8 @@ from sampler import *
 from utils import *
 from shm_naming import init_run_id, build_shm_namer
 
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-set_seed(args.seed)
+if args.seed is not None:
+    set_seed(args.seed)
 torch.distributed.init_process_group(backend='gloo')
 
 run_id = init_run_id(args.local_rank, src_rank=0)
