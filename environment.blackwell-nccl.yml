@@ -8,9 +8,12 @@ dependencies:
   - pip
   - pybind11
   - scikit-learn
-  # CUDA-enabled DGL package from conda-forge.
-  # This package depends on an older PyTorch, but the pip section below
-  # upgrades torch to the NCCL-safe stack that was validated on this machine.
+  # Bootstrap-only CUDA-enabled DGL package from conda-forge.
+  # The pip section below upgrades torch to the NCCL-safe stack validated on
+  # this machine, but that torch version does not match the GraphBolt library
+  # bundled inside this DGL package. scripts/create_blackwell_nccl_env.sh copies
+  # this DGL tree into .venv-blackwell and patches away the eager
+  # GraphBolt/distributed imports that TGL does not use.
   - dgl=2.1.0=cuda120py310h00d5dd0_2
   - pip:
       - --index-url https://download.pytorch.org/whl/cu128

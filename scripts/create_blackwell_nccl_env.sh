@@ -6,7 +6,8 @@ set -euo pipefail
 # - torch 2.10.0+cu128
 # - torch-scatter 2.1.2+pt210cu128
 # - torchdata 0.9.0
-# - CUDA-enabled DGL copied from an existing working env
+# - CUDA-enabled DGL copied from a bootstrap env and patched to skip
+#   GraphBolt/distributed eager imports that do not work with torch 2.10
 #
 # Why copy DGL instead of pip-installing it here?
 # DGL does not currently publish a public torch-2.10/cu128 wheel repo, while
@@ -20,6 +21,21 @@ source "${REPO_DIR}/scripts/uv-env.sh"
 ENV_DIR="${ENV_DIR:-${REPO_DIR}/.venv-blackwell}"
 PYTHON_REQ="${PYTHON_REQ:-3.10}"
 SRC_DGL_PYTHON="${SRC_DGL_PYTHON:-}"
+
+copy_runtime_lib() {
+  local src_libdir="$1"
+  local dst_libdir="$2"
+  local libname="$3"
+  local src_path="${src_libdir}/${libname}"
+  local dst_path="${dst_libdir}/${libname}"
+
+  if [[ ! -e "${src_path}" ]]; then
+    echo "Required runtime library not found: ${src_path}" >&2
+    exit 1
+  fi
+
+  cp -Lf "${src_path}" "${dst_path}"
+}
 
 resolve_source_dgl_python() {
   if [[ -n "${SRC_DGL_PYTHON}" ]]; then
@@ -44,7 +60,7 @@ if [[ ! -x "${SRC_DGL_PYTHON}" ]]; then
 fi
 
 echo "Syncing uv environment"
-uv venv --python "${PYTHON_REQ}" "${ENV_DIR}"
+uv venv --clear --python "${PYTHON_REQ}" "${ENV_DIR}"
 
 PYTHON_BIN="${ENV_DIR}/bin/python"
 
@@ -82,7 +98,7 @@ uv pip install --python "${PYTHON_BIN}" \
   torchdata==0.9.0 \
   tqdm
 
-echo "Checking source DGL environment"
+echo "Checking source DGL bootstrap environment"
 "${SRC_DGL_PYTHON}" - <<'PY'
 import sys
 
@@ -90,13 +106,6 @@ if sys.version_info[:2] != (3, 10):
     raise SystemExit(
         "This script expects the source DGL environment to use Python 3.10."
     )
-
-try:
-    import dgl  # noqa: F401
-except Exception as exc:
-    raise SystemExit(
-        "Source Python cannot import dgl. Set SRC_DGL_PYTHON to a working env."
-    ) from exc
 PY
 
 SRC_SITE_PACKAGES="$("${SRC_DGL_PYTHON}" - <<'PY'
@@ -116,6 +125,9 @@ if not paths:
 print(paths[0])
 PY
 )"
+
+SRC_ENV_LIB="$(dirname "$(dirname "${SRC_SITE_PACKAGES}")")"
+DST_ENV_LIB="$(dirname "$(dirname "${DST_SITE_PACKAGES}")")"
 
 "${PYTHON_BIN}" - <<'PY'
 import sys
@@ -146,6 +158,15 @@ find "${DST_SITE_PACKAGES}" -maxdepth 1 -type d -name 'dgl-*.dist-info' -exec rm
 find "${DST_SITE_PACKAGES}" -maxdepth 1 -type d -name 'dgl-*.egg-info' -exec rm -rf {} +
 cp -a "${SRC_DGL_DIR}" "${DST_SITE_PACKAGES}/"
 cp -a "${SRC_DGL_METADATA_DIR}" "${DST_SITE_PACKAGES}/"
+
+echo "Copying DGL runtime libraries into ${DST_ENV_LIB}"
+for libname in libmetis.so libgomp.so.1 libgcc_s.so.1 libstdc++.so.6; do
+  copy_runtime_lib "${SRC_ENV_LIB}" "${DST_ENV_LIB}" "${libname}"
+done
+
+echo "Patching copied DGL for the Blackwell torch stack"
+"${PYTHON_BIN}" "${REPO_DIR}/scripts/patch_dgl_for_blackwell.py" \
+  --site-packages "${DST_SITE_PACKAGES}"
 
 echo "Building sampler_core extension in-place"
 (

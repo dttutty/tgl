@@ -59,16 +59,52 @@ python train.py --data <NameOfYourDataset> --config <PathToConfigFile>
 
 ### Blackwell / NCCL experiment stack
 
-The repository also contains a separate Blackwell-specific experiment stack in [`environment.blackwell-nccl.yml`](environment.blackwell-nccl.yml) and [`scripts/create_blackwell_nccl_env.sh`](scripts/create_blackwell_nccl_env.sh). That stack is not the default `uv` project environment above.
+The repository also contains a separate Blackwell-specific bootstrap flow in [`environment.blackwell-nccl.yml`](environment.blackwell-nccl.yml) and [`scripts/create_blackwell_nccl_env.sh`](scripts/create_blackwell_nccl_env.sh). That stack is not the default `uv` project environment above.
 
-If you need that exact experimental stack, bootstrap it separately:
+Do not use `uv sync` or the default `.venv` on Blackwell GPUs. That environment is pinned to the older `cu118` stack and will fail on `sm_120`.
+
+Use the conda environment only as a source of the CUDA-enabled DGL package. The final runtime environment is `.venv-blackwell`, which the script assembles with `torch==2.10.0+cu128`, copies the DGL package and required native runtime libraries into place, and patches DGL so `import dgl` does not eagerly load the incompatible GraphBolt/distributed stack that TGL does not use.
+
+Install it like this:
 
 ```bash
-conda activate simple_py310
-bash scripts/create_blackwell_nccl_env.sh
+conda env create -f environment.blackwell-nccl.yml
+SRC_DGL_PYTHON="$(conda run -n tgl-blackwell-nccl which python | tail -n 1)" \
+  bash scripts/create_blackwell_nccl_env.sh
+source .venv-blackwell/bin/activate
+source scripts/uv-env.sh
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
 ```
 
-If you do not want to activate the old conda env first, set `SRC_DGL_PYTHON=/path/to/simple_py310/bin/python` before running the script.
+Verify the final environment before training:
+
+```bash
+python - <<'PY'
+import torch, dgl, torch_scatter, torchdata
+print(torch.__version__, torch.version.cuda)
+print(dgl.__version__)
+print(torch_scatter.__version__)
+print(torchdata.__version__)
+print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))
+PY
+```
+
+Expected result:
+
+- `torch` reports `2.10.0+cu128`
+- the GPU is detected as Blackwell with capability `(12, 0)`
+- `import dgl` succeeds
+
+If the bootstrap conda environment cannot `import dgl` after the pip-installed torch upgrade, that is expected. The runtime fix is applied to `.venv-blackwell` by [`scripts/patch_dgl_for_blackwell.py`](scripts/patch_dgl_for_blackwell.py).
+
+For training on Blackwell, keep using `.venv-blackwell` directly:
+
+```bash
+source .venv-blackwell/bin/activate
+source scripts/uv-env.sh
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+python train_non_timing_on_gpu.py --data <NameOfYourDataset> --config <PathToConfigFile>
+```
 
 ## Configuration Files
 
