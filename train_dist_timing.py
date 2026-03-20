@@ -231,6 +231,7 @@ if args.local_rank < args.num_gpus:
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[0], process_group=nccl_group, output_device=0, find_unused_parameters=find_unused_parameters)
     creterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
+    lr_scheduler = create_train_lr_scheduler(optimizer, train_param, default_monitor='val_ap')
     pinned_nfeat_buffs, pinned_efeat_buffs = get_pinned_buffers(sample_param, train_param['batch_size'], node_feats, edge_feats)
     if mailbox is not None:
         mailbox.allocate_pinned_memory_buffers(sample_param, train_param['batch_size'])
@@ -396,6 +397,13 @@ if args.local_rank < args.num_gpus:
             # ================= [新增代码 END] =================
             
             
+            continue
+        elif my_model_state[0] == 6:
+            scheduler_metrics = [None]
+            torch.distributed.broadcast_object_list(scheduler_metrics, src=args.num_gpus)
+            lr_scheduler_step = step_train_lr_scheduler(lr_scheduler, scheduler_metrics[0])
+            if lr_scheduler_step is not None and args.local_rank == 0:
+                print('\t{}'.format(format_lr_scheduler_step(lr_scheduler_step)))
             continue
         elif my_model_state[0] == 0:
             if prev_thread is not None:
@@ -840,6 +848,20 @@ else:
         torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
             # for memory based models, testing after validation is faster
         tap_, tauc_ = eval('test')
+        scheduler_metrics = {
+            'train_loss': total_loss,
+            'val_ap': ap,
+            'val_auc': auc,
+            'test_ap': tap_,
+            'test_auc': tauc_,
+            'test_score': tauc_,
+        }
+        if has_train_lr_scheduler(train_param):
+            model_state = [6] * (args.num_gpus + 1)
+            my_model_state = [None]
+            torch.distributed.scatter_object_list(my_model_state, model_state, src=args.num_gpus)
+            scheduler_payload = [scheduler_metrics]
+            torch.distributed.broadcast_object_list(scheduler_payload, src=args.num_gpus)
         if ap > best_ap:
             best_e = e
             best_ap = ap

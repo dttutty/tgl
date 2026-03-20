@@ -167,6 +167,7 @@ else:
 model = NodeClassificationModel(emb.shape[1], args.dim, labels.max() + 1).cuda()
 loss_fn = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+lr_scheduler = create_train_lr_scheduler(optimizer, train_param, default_monitor='val_acc') if train_param is not None else None
 labels = torch.from_numpy(labels).type(torch.int32)
 role = torch.from_numpy(role).type(torch.int32)
 emb = emb
@@ -267,6 +268,12 @@ for e in range(args.epoch):
             accs.append(acc)
         acc = float(torch.tensor(accs).mean())
     print('Epoch: {}\tVal acc: {:.4f}'.format(e, acc))
+    lr_scheduler_step = step_train_lr_scheduler(lr_scheduler, {
+        'val_acc': acc,
+        'val_score': acc,
+    })
+    if lr_scheduler_step is not None:
+        print('\t{}'.format(format_lr_scheduler_step(lr_scheduler_step)))
     if acc > best_acc:
         best_e = e
         best_acc = acc

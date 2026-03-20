@@ -25,5 +25,16 @@ train:
   - epoch: <an integer, number of epochs to train>
     batch_size: <an integer, the batch size (of edges); for multi-gpu training, this is the local batchsize>
     lr: <floating point, learning rate>
+    lr_scheduler:
+      type: <optional; 'reduce_on_plateau' or 'plateau'>
+      monitor: <optional metric name; defaults to 'val_ap' for link prediction scripts and 'val_acc' for train_node.py>
+      mode: <optional; 'min' or 'max'; defaults to 'min' for loss monitors, otherwise 'max'>
+      factor: <optional floating point decay factor; default 0.5>
+      patience: <optional integer epochs to wait before reducing LR; default 5>
+      threshold: <optional floating point improvement threshold; default 1.0e-4>
+      threshold_mode: <optional; 'rel' or 'abs'; default 'rel'>
+      cooldown: <optional integer cooldown epochs; default 0>
+      min_lr: <optional floating point lower bound; default 0.0>
+      eps: <optional floating point minimum decay applied to LR; default 1.0e-8>
     dropout: <floating point, dropout>
     att_dropout: <floating point, dropout for attention>

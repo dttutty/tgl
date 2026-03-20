@@ -89,6 +89,7 @@ if mailbox is not None and gpu_resident_buffers:
     mailbox.move_to_gpu()
 creterion = torch.nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
+lr_scheduler = create_train_lr_scheduler(optimizer, train_param, default_monitor='val_ap')
 sampler = None
 if not ('no_sample' in sample_param and sample_param['no_sample']):
     sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
@@ -263,6 +264,19 @@ for e in range(train_param['epoch']):
 
     ap, auc = eval('val')
     test_ap, test_auc = eval('test')
+    scheduler_metrics = {
+        'train_loss': total_loss,
+        'val_loss': val_losses[-1] if val_losses else None,
+        'val_ap': ap,
+        'val_auc': auc,
+        'test_ap': test_ap,
+        'test_score': test_auc,
+    }
+    if args.eval_neg_samples > 1:
+        scheduler_metrics['test_mrr'] = test_auc
+    else:
+        scheduler_metrics['test_auc'] = test_auc
+    lr_scheduler_step = step_train_lr_scheduler(lr_scheduler, scheduler_metrics)
 
     if e > 2 and ap > best_ap:
         best_e = e
@@ -270,6 +284,8 @@ for e in range(train_param['epoch']):
         best_test_ap = test_ap
         best_test_auc = test_auc
     print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}, test ap:{:4f}  test auc:{:4f}'.format(total_loss, ap, auc, test_ap, test_auc))
+    if lr_scheduler_step is not None:
+        print('\t{}'.format(format_lr_scheduler_step(lr_scheduler_step)))
 
 if best_e == -1:
     # Ensure a loadable checkpoint always exists (e.g., short runs without best-epoch trigger).

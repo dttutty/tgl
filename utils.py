@@ -31,6 +31,114 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def _normalize_lr_scheduler_config(train_param):
+    if train_param is None:
+        return None
+    scheduler_cfg = train_param.get('lr_scheduler')
+    if scheduler_cfg is None or scheduler_cfg is False:
+        return None
+    if isinstance(scheduler_cfg, str):
+        scheduler_cfg = {'type': scheduler_cfg}
+    elif not isinstance(scheduler_cfg, dict):
+        raise TypeError('train.lr_scheduler must be a string or a mapping')
+
+    scheduler_cfg = dict(scheduler_cfg)
+    scheduler_type = scheduler_cfg.get('type', 'reduce_on_plateau')
+    if scheduler_type is None or scheduler_type is False:
+        return None
+
+    scheduler_type = str(scheduler_type).lower()
+    if scheduler_type == 'none':
+        return None
+    if scheduler_type in {'plateau', 'reduce_on_plateau', 'reducelronplateau'}:
+        scheduler_cfg['type'] = 'reduce_on_plateau'
+        return scheduler_cfg
+    raise ValueError('Unsupported train.lr_scheduler type: {}'.format(scheduler_cfg['type']))
+
+def has_train_lr_scheduler(train_param):
+    return _normalize_lr_scheduler_config(train_param) is not None
+
+def create_train_lr_scheduler(optimizer, train_param, default_monitor='val_ap'):
+    scheduler_cfg = _normalize_lr_scheduler_config(train_param)
+    if scheduler_cfg is None:
+        return None
+
+    monitor = scheduler_cfg.pop('monitor', None) or default_monitor
+    mode = scheduler_cfg.pop('mode', None)
+    if mode is None:
+        mode = 'min' if 'loss' in monitor.lower() else 'max'
+
+    scheduler_type = scheduler_cfg.pop('type')
+    if scheduler_type != 'reduce_on_plateau':
+        raise ValueError('Unsupported normalized scheduler type: {}'.format(scheduler_type))
+
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode=mode,
+        factor=scheduler_cfg.pop('factor', 0.5),
+        patience=scheduler_cfg.pop('patience', 5),
+        threshold=scheduler_cfg.pop('threshold', 1e-4),
+        threshold_mode=scheduler_cfg.pop('threshold_mode', 'rel'),
+        cooldown=scheduler_cfg.pop('cooldown', 0),
+        min_lr=scheduler_cfg.pop('min_lr', 0.0),
+        eps=scheduler_cfg.pop('eps', 1e-8),
+    )
+    if scheduler_cfg:
+        raise ValueError(
+            'Unsupported train.lr_scheduler options: {}'.format(', '.join(sorted(scheduler_cfg.keys())))
+        )
+
+    return {
+        'type': scheduler_type,
+        'monitor': monitor,
+        'mode': mode,
+        'scheduler': scheduler,
+    }
+
+def step_train_lr_scheduler(lr_scheduler, metrics):
+    if lr_scheduler is None:
+        return None
+
+    monitor = lr_scheduler['monitor']
+    if monitor not in metrics:
+        raise KeyError(
+            "Configured lr scheduler monitor '{}' is unavailable. Available metrics: {}".format(
+                monitor, ', '.join(sorted(metrics.keys()))
+            )
+        )
+
+    metric = metrics[monitor]
+    if metric is None:
+        raise ValueError("Configured lr scheduler monitor '{}' has value None".format(monitor))
+
+    scheduler = lr_scheduler['scheduler']
+    old_lrs = [float(param_group['lr']) for param_group in scheduler.optimizer.param_groups]
+    scheduler.step(float(metric))
+    new_lrs = [float(param_group['lr']) for param_group in scheduler.optimizer.param_groups]
+
+    return {
+        'type': lr_scheduler['type'],
+        'monitor': monitor,
+        'metric': float(metric),
+        'old_lrs': old_lrs,
+        'new_lrs': new_lrs,
+    }
+
+def format_lr_scheduler_step(step_result):
+    if step_result is None:
+        return ''
+
+    def _format_lrs(lrs):
+        return ', '.join('{:.6g}'.format(lr) for lr in lrs)
+
+    return 'lr scheduler {} monitor {}={:.6f} lr {} -> {}'.format(
+        step_result['type'],
+        step_result['monitor'],
+        step_result['metric'],
+        _format_lrs(step_result['old_lrs']),
+        _format_lrs(step_result['new_lrs']),
+    )
+
 def load_feat(d, rand_de, rand_dn):
     node_feats = None
     if os.path.exists('DATA/{}/node_features.pt'.format(d)):
