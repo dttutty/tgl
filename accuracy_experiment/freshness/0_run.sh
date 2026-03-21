@@ -20,6 +20,7 @@ This script defines freshness experiment jobs.
 When called normally, it delegates scheduling to accuracy_experiment/run_on_one_gpu.py.
 When called with --emit-jobs, it prints job definitions for the scheduler.
 Experiment settings are loaded from accuracy_experiment/freshness/0_run.yaml.
+Use `seeds:` in the YAML to enumerate exact seeds for each run.
 EOF
 }
 
@@ -151,8 +152,8 @@ datasets = conf.get("datasets") or []
 delays = conf.get("delays") or []
 dim_outs = conf.get("dim_outs") or []
 batch_size = int(conf.get("batch_size", 600))
-repeats = int(conf.get("repeats", 1))
 target_epoch = int(conf.get("target_epoch", 1))
+seed_values = conf.get("seeds")
 
 if not models:
     raise RuntimeError("0_run.yaml must define at least one model")
@@ -163,6 +164,16 @@ if not delays:
 if not dim_outs:
     raise RuntimeError("0_run.yaml must define at least one dim_out")
 
+if seed_values is None:
+    repeats = int(conf.get("repeats", 1))
+    seeds = list(range(1, repeats + 1))
+else:
+    if not isinstance(seed_values, list) or not seed_values:
+        raise RuntimeError("0_run.yaml `seeds` must be a non-empty list when provided")
+    seeds = [int(seed) for seed in seed_values]
+
+seed_count = len(seeds)
+
 for dataset in datasets:
     dataset_name = dataset["name"]
     extra_args = dataset.get("extra_args", "")
@@ -171,7 +182,7 @@ for dataset in datasets:
         model_config = model["config"]
         for dim_out in dim_outs:
             for delay in delays:
-                for run_id in range(1, repeats + 1):
+                for seed in seeds:
                     print(
                         "\t".join(
                             [
@@ -181,9 +192,9 @@ for dataset in datasets:
                                 extra_args,
                                 str(dim_out),
                                 str(delay),
-                                str(run_id),
+                                str(seed),
                                 str(batch_size),
-                                str(repeats),
+                                str(seed_count),
                                 str(target_epoch),
                             ]
                         )
@@ -199,19 +210,19 @@ if [[ "${#experiment_rows[@]}" -eq 0 ]]; then
 fi
 
 first_row="${experiment_rows[0]}"
-IFS=$'\t' read -r _ _ _ _ _ _ _ BATCH_SIZE_CFG REPEATS TARGET_EPOCH <<< "$first_row"
+IFS=$'\t' read -r _ _ _ _ _ _ _ BATCH_SIZE_CFG SEED_COUNT TARGET_EPOCH <<< "$first_row"
 
 echo "Logs: $LOG_DIR" >&2
 echo "Python: $PYTHON_BIN" >&2
 echo "Config: $CONFIG_PATH" >&2
 echo "Batch size per run: $BATCH_SIZE_CFG" >&2
 echo "Epoch per run: $TARGET_EPOCH" >&2
-echo "Repeats per experiment: $REPEATS" >&2
+echo "Seeds per experiment: $SEED_COUNT" >&2
 
 declare -A prepared_dim_configs
 
 for row in "${experiment_rows[@]}"; do
-    IFS=$'\t' read -r model config dataset extra dim_out delay run_id batch_size repeats target_epoch <<< "$row"
+    IFS=$'\t' read -r model config dataset extra dim_out delay seed batch_size seed_count target_epoch <<< "$row"
     extra_args=()
     if [[ -n "$extra" ]]; then
         read -r -a extra_args <<< "$extra"
@@ -225,13 +236,14 @@ for row in "${experiment_rows[@]}"; do
     fi
     IFS=$'\t' read -r batch_size_cfg epoch_cfg < <(get_train_meta "$dim_config")
 
-    log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}_delay${delay}_run${run_id}_pin.log"
-    desc="${model}/${dataset}/bs${batch_size_cfg}/memdim${dim_out}/ep${epoch_cfg}/delay${delay}/run${run_id}"
+    log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_bs${batch_size_cfg}_memdim${dim_out}_ep${epoch_cfg}_delay${delay}_run${seed}_pin.log"
+    desc="${model}/${dataset}/bs${batch_size_cfg}/memdim${dim_out}/ep${epoch_cfg}/delay${delay}/seed${seed}"
     cmd=(
         "$PYTHON_BIN" -u "$REPO_ROOT/train_non_timing_on_gpu.py"
         --data "$dataset"
         --config "$dim_config"
-        --model_name "${model}_${dataset}_dim${dim_out}_delay${delay}_run${run_id}_pin"
+        --model_name "${model}_${dataset}_dim${dim_out}_delay${delay}_seed${seed}_pin"
+        --seed "$seed"
         --pin_memory
         --memory_update_delay_batches "$delay"
         --gpu "__RUN_ON_ONE_GPU_ASSIGNED_GPU__"
@@ -241,7 +253,7 @@ for row in "${experiment_rows[@]}"; do
     fi
 
     echo "============================================================" >&2
-    echo "[${model} / ${dataset} / batch_size=${batch_size_cfg} / dim_out=${dim_out} / epoch=${epoch_cfg} / delay=${delay} / run=${run_id}/${repeats} / pin_memory=true]" >&2
+    echo "[${model} / ${dataset} / batch_size=${batch_size_cfg} / dim_out=${dim_out} / epoch=${epoch_cfg} / delay=${delay} / seed=${seed} / total_seeds=${seed_count} / pin_memory=true]" >&2
     echo "config=$dim_config" >&2
     echo "log=$log_file" >&2
     echo "============================================================" >&2
