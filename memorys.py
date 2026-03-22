@@ -1,13 +1,18 @@
 import torch
+import torch.distributed as dist
 import dgl
 from layers import TimeEncode
 from torch_scatter import scatter
 
 class MailBox():
 
-    def __init__(self, memory_param, num_nodes, dim_edge_feat, _node_memory=None, _node_memory_ts=None,_mailbox=None, _mailbox_ts=None, _next_mail_pos=None, _update_mail_pos=None):
+    def __init__(self, memory_param, num_nodes, dim_edge_feat, _node_memory=None, _node_memory_ts=None,_mailbox=None, _mailbox_ts=None, _next_mail_pos=None, _update_mail_pos=None, strict_avoid_rc=False, rank=None, num_gpus=None, nccl_group=None):
         self.memory_param = memory_param
         self.dim_edge_feat = dim_edge_feat
+        self.strict_avoid_rc = strict_avoid_rc
+        self.rank = rank
+        self.num_gpus = num_gpus
+        self.nccl_group = nccl_group
         if memory_param['type'] != 'node':
             raise NotImplementedError
         self.node_memory = torch.zeros((num_nodes, memory_param['dim_out']), dtype=torch.float32) if _node_memory is None else _node_memory
@@ -73,16 +78,32 @@ class MailBox():
                 b.srcdata['mem_input'] = self._gather_rows(self.mailbox, b.srcdata['ID'], b.device).reshape(b.srcdata['ID'].shape[0], -1)
                 b.srcdata['mail_ts'] = self._gather_rows(self.mailbox_ts, b.srcdata['ID'], b.device)
 
+    def _serialized_write(self, write_fn):
+        """Execute write_fn with rank ordering: rank 0 first, then rank 1, etc."""
+        for r in range(self.num_gpus):
+            if self.rank == r:
+                write_fn()
+            dist.barrier(group=self.nccl_group)
+
     def update_memory(self, nid, memory, root_nodes, ts, neg_samples=1):
         if nid is None:
+            if self.strict_avoid_rc:
+                for _ in range(self.num_gpus):
+                    dist.barrier(group=self.nccl_group)
             return
         num_true_src_dst = root_nodes.shape[0] // (neg_samples + 2) * 2
         with torch.no_grad():
             nid = nid[:num_true_src_dst].to(self.device)
             memory = memory[:num_true_src_dst].to(self.device)
             ts = ts[:num_true_src_dst].to(self.device)
-            self.node_memory[nid.long()] = memory
-            self.node_memory_ts[nid.long()] = ts
+            if self.strict_avoid_rc:
+                def _write():
+                    self.node_memory[nid.long()] = memory
+                    self.node_memory_ts[nid.long()] = ts
+                self._serialized_write(_write)
+            else:
+                self.node_memory[nid.long()] = memory
+                self.node_memory_ts[nid.long()] = ts
 
     def update_mailbox(self, nid, memory, root_nodes, ts, edge_feats, block, neg_samples=1):
         with torch.no_grad():
@@ -117,10 +138,15 @@ class MailBox():
                 mail = mail[perm]
                 mail_ts = mail_ts[perm]
                 if self.memory_param['mail_combine'] == 'last':
-                    self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
-                    self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
-                    if self.memory_param['mailbox_size'] > 1:
-                        self.next_mail_pos[nid.long()] = torch.remainder(self.next_mail_pos[nid.long()] + 1, self.memory_param['mailbox_size'])
+                    def _write_self():
+                        self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
+                        self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
+                        if self.memory_param['mailbox_size'] > 1:
+                            self.next_mail_pos[nid.long()] = torch.remainder(self.next_mail_pos[nid.long()] + 1, self.memory_param['mailbox_size'])
+                    if self.strict_avoid_rc:
+                        self._serialized_write(_write_self)
+                    else:
+                        _write_self()
             # APAN
             elif self.memory_param['deliver_to'] == 'neighbors':
                 mem_src = memory[:num_true_edges]
@@ -139,8 +165,13 @@ class MailBox():
                     (nid, idx) = torch.unique(block.dstdata['ID'], return_inverse=True)
                     mail = scatter(mail, idx, reduce='mean', dim=0)
                     mail_ts = scatter(mail_ts, idx, reduce='mean')
-                    self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
-                    self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
+                    def _write_ngh_mean():
+                        self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
+                        self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
+                    if self.strict_avoid_rc:
+                        self._serialized_write(_write_ngh_mean)
+                    else:
+                        _write_ngh_mean()
                 elif self.memory_param['mail_combine'] == 'last':
                     nid = block.dstdata['ID']
                     # find unique nid to update mailbox
@@ -150,8 +181,13 @@ class MailBox():
                     nid = nid[perm]
                     mail = mail[perm]
                     mail_ts = mail_ts[perm]
-                    self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
-                    self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
+                    def _write_ngh_last():
+                        self.mailbox[nid.long(), self.next_mail_pos[nid.long()]] = mail
+                        self.mailbox_ts[nid.long(), self.next_mail_pos[nid.long()]] = mail_ts
+                    if self.strict_avoid_rc:
+                        self._serialized_write(_write_ngh_last)
+                    else:
+                        _write_ngh_last()
                 else:
                     raise NotImplementedError
                 if self.memory_param['mailbox_size'] > 1:

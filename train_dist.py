@@ -21,6 +21,7 @@ parser.add_argument(
     "--rnd_ndim", type=int, default=0
 )  # if your dataset has no node features, set rnd_ndim > 0 to use random node features
 parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
+parser.add_argument('--strict_avoid_rc', action='store_true', default=False, help='serialize memory/mailbox writes across ranks to avoid race conditions')
 args=parser.parse_args()
 args.local_rank = 0
 if 'LOCAL_RANK' in os.environ:
@@ -158,7 +159,7 @@ if memory_param['type'] != 'none':
         mail_ts = get_shared_mem_array(shm_name('mails_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
         next_mail_pos = get_shared_mem_array(shm_name('next_mail_pos'), torch.Size([num_nodes]), dtype=torch.long)
         update_mail_pos = get_shared_mem_array(shm_name('update_mail_pos'), torch.Size([num_nodes]), dtype=torch.int32)
-    mailbox = MailBox(memory_param, num_nodes, dim_feats[4], node_memory, node_memory_ts, mails, mail_ts, next_mail_pos, update_mail_pos)
+    mailbox = MailBox(memory_param, num_nodes, dim_feats[4], node_memory, node_memory_ts, mails, mail_ts, next_mail_pos, update_mail_pos, strict_avoid_rc=args.strict_avoid_rc, rank=args.local_rank, num_gpus=args.num_gpus, nccl_group=nccl_group)
 
 class DataPipelineThread(threading.Thread):
     
