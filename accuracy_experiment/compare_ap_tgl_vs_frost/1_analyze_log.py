@@ -10,7 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 
 FILENAME_PATTERN = re.compile(
-    r"^(?:(?P<username>[^_]+)(?:_(?P<hostname>[^_]+))?_)?(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_ngpu(?P<num_gpus>\d+)_memdim(?P<mem_dim>\d+)_ep(?P<epochs>\d+)_rep(?P<repeat>\d+)\.log$"
+    r"^(?:(?P<username>[^_]+)(?:_(?P<hostname>[^_]+))?_)?(?P<model>[^_]+)_(?P<dataset>[^_]+)_bs(?P<batch_size>\d+)_ngpu(?P<num_gpus>\d+)_memdim(?P<mem_dim>\d+)_ep(?P<epochs>\d+)_seed(?P<seed>\d+)\.log$"
 )
 TEST_AP_PATTERN = re.compile(r"test ap:([0-9]*\.?[0-9]+)", flags=re.IGNORECASE)
 TEST_AUC_PATTERN = re.compile(r"test auc:([0-9]*\.?[0-9]+)", flags=re.IGNORECASE)
@@ -43,7 +43,7 @@ def parse_one_log(log_path: Path, log_dir: Path) -> dict[str, object] | None:
         "num_gpus": int(meta["num_gpus"]),
         "mem_dim": int(meta["mem_dim"]),
         "epochs": int(meta["epochs"]),
-        "repeat": int(meta["repeat"]),
+        "seed": int(meta["seed"]),
         "best_epoch": int(best_epoch_matches[-1]) if best_epoch_matches else "",
         "test_ap": float(ap_matches[-1]),
         "test_auc": float(auc_matches[-1]) if auc_matches else "",
@@ -67,7 +67,7 @@ def build_summary(rows: list[dict[str, object]]) -> list[dict[str, object]]:
 
     summary_rows: list[dict[str, object]] = []
     for key in sorted(grouped):
-        group = sorted(grouped[key], key=lambda row: int(row["repeat"]))
+        group = sorted(grouped[key], key=lambda row: int(row["seed"]))
         ap_values = [float(row["test_ap"]) for row in group]
         auc_values = [float(row["test_auc"]) for row in group if row["test_auc"] != ""]
         summary_rows.append(
@@ -131,7 +131,7 @@ def main() -> None:
         print("No valid AP results parsed from logs.")
         return
 
-    rows.sort(key=lambda row: (str(row["run_tag"]), int(row["batch_size"]), int(row["mem_dim"]), int(row["repeat"])))
+    rows.sort(key=lambda row: (str(row["run_tag"]), int(row["batch_size"]), int(row["mem_dim"]), int(row["seed"])))
     summary_rows = build_summary(rows)
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -148,7 +148,7 @@ def main() -> None:
             "num_gpus",
             "mem_dim",
             "epochs",
-            "repeat",
+            "seed",
             "best_epoch",
             "test_ap",
             "test_auc",

@@ -20,7 +20,7 @@ ASSIGNED_GPU_PAIR_TOKEN = "__RUN_ON_GPU_PAIR_ASSIGNED_GPUS__"
 
 @dataclass
 class SchedulerConfig:
-    max_concurrent_jobs: int = 16
+    max_concurrent_jobs: int = 32
     max_jobs_per_gpu_pair: int = 8
     est_mem_per_job_mb: int = 5000
     min_free_mem_mb: int = 1500

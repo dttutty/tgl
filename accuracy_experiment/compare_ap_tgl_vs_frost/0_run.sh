@@ -146,7 +146,7 @@ with open(config_path, "r", encoding="utf-8") as f:
 models = conf.get("models") or []
 datasets = conf.get("datasets") or []
 mem_dims = conf.get("mem_dims") or []
-repeats = int(conf.get("repeats", 1))
+seeds = conf.get("seeds") or [0]
 target_epoch = int(conf.get("target_epoch", 1))
 batch_size = int(conf.get("batch_size", 1))
 
@@ -164,7 +164,7 @@ for dataset in datasets:
         model_name = model["name"]
         model_config = model["config"]
         for mem_dim in mem_dims:
-            for repeat_idx in range(1, repeats + 1):
+            for seed in seeds:
                 print(
                     "\t".join(
                         [
@@ -173,8 +173,7 @@ for dataset in datasets:
                             dataset_name,
                             extra_args,
                             str(mem_dim),
-                            str(repeat_idx),
-                            str(repeats),
+                            str(seed),
                             str(target_epoch),
                             str(batch_size),
                         ]
@@ -191,7 +190,7 @@ if [[ "${#experiment_rows[@]}" -eq 0 ]]; then
 fi
 
 first_row="${experiment_rows[0]}"
-IFS=$'\t' read -r _ _ _ _ _ _ REPEATS TARGET_EPOCH BATCH_SIZE <<< "$first_row"
+IFS=$'\t' read -r _ _ _ _ _ _ TARGET_EPOCH BATCH_SIZE <<< "$first_row"
 
 echo "Logs: $LOG_DIR" >&2
 echo "Tmp configs: $TMP_CONFIG_DIR" >&2
@@ -200,7 +199,6 @@ echo "Config: $CONFIG_PATH" >&2
 echo "Task GPUs per job: $TASK_NUM_GPUS" >&2
 echo "Batch size: $BATCH_SIZE" >&2
 echo "Epochs: $TARGET_EPOCH" >&2
-echo "Repeats: $REPEATS" >&2
 echo "OMP threads: $OMP_THREADS" >&2
 echo "Total runs: ${#experiment_rows[@]}" >&2
 
@@ -208,7 +206,7 @@ declare -A prepared_batch_configs
 run_idx=0
 
 for row in "${experiment_rows[@]}"; do
-    IFS=$'\t' read -r model config dataset extra mem_dim repeat_idx repeats target_epoch batch_size <<< "$row"
+    IFS=$'\t' read -r model config dataset extra mem_dim seed target_epoch batch_size <<< "$row"
 
     if [[ ! -f "$REPO_ROOT/$config" ]]; then
         echo "Config file not found: $REPO_ROOT/$config" >&2
@@ -228,8 +226,8 @@ for row in "${experiment_rows[@]}"; do
     fi
 
     master_port=$((BASE_MASTER_PORT + run_idx))
-    log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_bs${batch_size}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${target_epoch}_rep${repeat_idx}.log"
-    desc="${model}/${dataset}/bs${batch_size}/memdim${mem_dim}/ep${target_epoch}/rep${repeat_idx}"
+    log_file="$LOG_DIR/${USER_PREFIX}_${model}_${dataset}_bs${batch_size}_ngpu${TASK_NUM_GPUS}_memdim${mem_dim}_ep${target_epoch}_seed${seed}.log"
+    desc="${model}/${dataset}/bs${batch_size}/memdim${mem_dim}/ep${target_epoch}/seed${seed}"
 
     cmd=(
         "$PYTHON_BIN" -u -m torch.distributed.run
@@ -237,7 +235,7 @@ for row in "${experiment_rows[@]}"; do
         --master_addr "$MASTER_ADDR"
         --master_port "$master_port"
         "$REPO_ROOT/train_dist.py"
-        --seed
+        --seed "$seed"
         --dataset "$dataset"
         --config "$batch_config"
         --num_gpus "$TASK_NUM_GPUS"
@@ -249,7 +247,7 @@ for row in "${experiment_rows[@]}"; do
     fi
 
     echo "============================================================" >&2
-    echo "[run $((run_idx + 1))/${#experiment_rows[@]}] model=${model} dataset=${dataset} batch_size=${batch_size} mem_dim=${mem_dim} epoch=${target_epoch} repeat=${repeat_idx}/${repeats}" >&2
+    echo "[run $((run_idx + 1))/${#experiment_rows[@]}] model=${model} dataset=${dataset} batch_size=${batch_size} mem_dim=${mem_dim} epoch=${target_epoch} seed=${seed}" >&2
     echo "config: ${batch_config}" >&2
     echo "log: ${log_file}" >&2
     echo "master_port: ${master_port}" >&2
