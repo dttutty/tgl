@@ -622,6 +622,7 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "dgl" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pyyaml" },
@@ -640,6 +641,7 @@ plot = [
 [package.metadata]
 requires-dist = [
     { name = "dgl", specifier = "==2.4.0+cu118", index = "https://data.dgl.ai/wheels/torch-2.4/cu118/repo.html" },
+    { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "matplotlib", marker = "extra == 'plot'" },
     { name = "numpy", specifier = "==1.26.4" },
     { name = "pandas", specifier = "==2.3.2" },

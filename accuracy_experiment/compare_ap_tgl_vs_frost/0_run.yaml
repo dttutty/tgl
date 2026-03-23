@@ -8,7 +8,7 @@ datasets:
 
 mem_dims:
   - 128
-  # - 256
+  - 256
   # - 512
 
 target_epoch: 100
