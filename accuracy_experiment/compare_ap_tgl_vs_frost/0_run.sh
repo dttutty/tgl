@@ -148,7 +148,12 @@ datasets = conf.get("datasets") or []
 mem_dims = conf.get("mem_dims") or []
 seeds = conf.get("seeds") or [0]
 target_epoch = int(conf.get("target_epoch", 1))
-batch_size = int(conf.get("batch_size", 1))
+raw_batch_sizes = conf.get("batch_sizes")
+
+if raw_batch_sizes is None:
+    batch_sizes = [int(conf.get("batch_size", 1))]
+else:
+    batch_sizes = [int(batch_size) for batch_size in raw_batch_sizes]
 
 if not models:
     raise RuntimeError("0_run.yaml must define at least one model")
@@ -156,6 +161,8 @@ if not datasets:
     raise RuntimeError("0_run.yaml must define at least one dataset")
 if not mem_dims:
     raise RuntimeError("0_run.yaml must define at least one mem_dim")
+if not batch_sizes:
+    raise RuntimeError("0_run.yaml must define at least one batch_size or batch_sizes entry")
 
 for dataset in datasets:
     dataset_name = dataset["name"]
@@ -164,21 +171,22 @@ for dataset in datasets:
         model_name = model["name"]
         model_config = model["config"]
         for mem_dim in mem_dims:
-            for seed in seeds:
-                print(
-                    "\t".join(
-                        [
-                            model_name,
-                            model_config,
-                            dataset_name,
-                            extra_args,
-                            str(mem_dim),
-                            str(seed),
-                            str(target_epoch),
-                            str(batch_size),
-                        ]
+            for batch_size in batch_sizes:
+                for seed in seeds:
+                    print(
+                        "\t".join(
+                            [
+                                model_name,
+                                model_config,
+                                dataset_name,
+                                extra_args,
+                                str(mem_dim),
+                                str(seed),
+                                str(target_epoch),
+                                str(batch_size),
+                            ]
+                        )
                     )
-                )
 PY
 }
 
@@ -190,14 +198,24 @@ if [[ "${#experiment_rows[@]}" -eq 0 ]]; then
 fi
 
 first_row="${experiment_rows[0]}"
-IFS=$'\t' read -r _ _ _ _ _ _ TARGET_EPOCH BATCH_SIZE <<< "$first_row"
+IFS=$'\t' read -r _ _ _ _ _ _ TARGET_EPOCH _first_batch_size <<< "$first_row"
+
+declare -A seen_batch_sizes
+batch_sizes=()
+for row in "${experiment_rows[@]}"; do
+    IFS=$'\t' read -r _ _ _ _ _ _ _ row_batch_size <<< "$row"
+    if [[ -z "${seen_batch_sizes[$row_batch_size]:-}" ]]; then
+        batch_sizes+=("$row_batch_size")
+        seen_batch_sizes[$row_batch_size]=1
+    fi
+done
 
 echo "Logs: $LOG_DIR" >&2
 echo "Tmp configs: $TMP_CONFIG_DIR" >&2
 echo "Python: $PYTHON_BIN" >&2
 echo "Config: $CONFIG_PATH" >&2
 echo "Task GPUs per job: $TASK_NUM_GPUS" >&2
-echo "Batch size: $BATCH_SIZE" >&2
+echo "Batch sizes: ${batch_sizes[*]}" >&2
 echo "Epochs: $TARGET_EPOCH" >&2
 echo "OMP threads: $OMP_THREADS" >&2
 echo "Total runs: ${#experiment_rows[@]}" >&2
@@ -218,8 +236,8 @@ for row in "${experiment_rows[@]}"; do
         read -r -a extra_args <<< "$extra"
     fi
 
-    batch_config_key="${model}:${config}:${batch_size}:${target_epoch}:${mem_dim}"
     batch_config="$TMP_CONFIG_DIR/${model}_${dataset}_memdim${mem_dim}_ep${target_epoch}_bs${batch_size}.yml"
+    batch_config_key="$batch_config"
     if [[ -z "${prepared_batch_configs[$batch_config_key]:-}" ]]; then
         make_experiment_config "$REPO_ROOT/$config" "$batch_config" "$batch_size" "$target_epoch" "$mem_dim"
         prepared_batch_configs[$batch_config_key]=1
