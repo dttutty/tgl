@@ -1,7 +1,7 @@
 (.venv) sqp17@sun:~/Projects/frost/third_party/tgl$ uv run python check_if_reverse_added.py --data REDDIT
 dataset: REDDIT
-graph: DATA/REDDIT/ext_full.npz
-graph_type: ext_full
+graph: DATA/REDDIT/full_graph_with_reverse_edges.npz
+graph_type: full_graph_with_reverse_edges
 eligible_edges: 672447
 graph_entries: 1344894
 reverse_added: inconsistent
@@ -22,8 +22,8 @@ missing_reverse_edges: 27512
 We regenerated, now:
 (.venv) sqp17@sun:~/Projects/frost/third_party/tgl$ uv run python check_if_reverse_added.py --data REDDIT
 dataset: REDDIT
-graph: DATA/REDDIT/ext_full.npz
-graph_type: ext_full
+graph: DATA/REDDIT/full_graph_with_reverse_edges.npz
+graph_type: full_graph_with_reverse_edges
 eligible_edges: 672447
 graph_entries: 1344894
 reverse_added: yes

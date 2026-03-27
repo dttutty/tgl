@@ -32,7 +32,7 @@ if __name__ == '__main__':
     args=parser.parse_args()
 
     df = pd.read_csv('DATA/{}/edges.csv'.format(args.data))
-    g = np.load('DATA/{}/ext_full.npz'.format(args.data))
+    g = np.load('DATA/{}/full_graph_with_reverse_edges.npz'.format(args.data))
     sample_config = yaml.safe_load(open(args.config, 'r'))['sampling'][0]
 
     sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),

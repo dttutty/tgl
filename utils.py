@@ -166,7 +166,7 @@ def load_feat(d, rand_de, rand_dn):
 
 def load_graph(d):
     df = pd.read_csv('DATA/{}/edges.csv'.format(d))
-    g = np.load('DATA/{}/ext_full.npz'.format(d))
+    g = np.load('DATA/{}/full_graph_with_reverse_edges.npz'.format(d))
     return g, df
 
 def parse_config(f):

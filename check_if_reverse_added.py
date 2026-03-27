@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 
-GRAPH_TYPES = ("int_train", "int_full", "ext_full")
+GRAPH_TYPES = ("int_train", "int_full", "full_graph_with_reverse_edges")
 
 
 def parse_args():
@@ -17,8 +17,8 @@ def parse_args():
     parser.add_argument(
         "--graph",
         type=str,
-        default="ext_full",
-        help="graph name (int_train/int_full/ext_full) or a path to a .npz graph file",
+        default="full_graph_with_reverse_edges",
+        help="graph name (int_train/int_full/full_graph_with_reverse_edges) or a path to a .npz graph file",
     )
     parser.add_argument(
         "--sample_limit",
@@ -51,7 +51,7 @@ def eligible_mask(edges_df, graph_type):
         return int_roll == 0
     if graph_type == "int_full":
         return int_roll != 3
-    if graph_type == "ext_full":
+    if graph_type == "full_graph_with_reverse_edges":
         return np.ones(len(edges_df), dtype=bool)
     raise ValueError(f"Unsupported graph type: {graph_type}")
 
