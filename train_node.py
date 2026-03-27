@@ -47,9 +47,9 @@ print_run_configuration(
 )
 
 ldf = pd.read_csv('DATA/{}/labels.csv'.format(args.data))
-role = ldf['ext_roll'].values
-# train_node_end = ldf[ldf['ext_roll'].gt(0)].index[0]
-# val_node_end = ldf[ldf['ext_roll'].gt(1)].index[0]
+role = ldf['default_split'].values
+# train_node_end = ldf[ldf['default_split'].gt(0)].index[0]
+# val_node_end = ldf[ldf['default_split'].gt(1)].index[0]
 labels = ldf['label'].values.astype(np.int64)
 
 emb_file_name = hashlib.md5(str(torch.load(args.model, map_location=torch.device('cpu'))).encode('utf-8')).hexdigest() + '.pt'
@@ -70,8 +70,8 @@ if not os.path.isfile('embs/' + emb_file_name):
             train_param,
             config_path=args.config if args.config else None,
         )
-    train_edge_end = df[df['ext_roll'].gt(0)].index[0]
-    val_edge_end = df[df['ext_roll'].gt(1)].index[0]
+    train_edge_end = df[df['default_split'].gt(0)].index[0]
+    val_edge_end = df[df['default_split'].gt(1)].index[0]
 
     gnn_dim_node = 0 if node_feats is None else node_feats.shape[1]
     gnn_dim_edge = 0 if edge_feats is None else edge_feats.shape[1]

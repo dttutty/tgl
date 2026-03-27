@@ -44,8 +44,8 @@ print_run_configuration(
 )
 node_feats, edge_feats = load_feat(args.data, args.rand_edge_features, args.rand_node_features)
 g, df = load_graph(args.data)
-train_edge_end = df[df['ext_roll'].gt(0)].index[0]
-val_edge_end = df[df['ext_roll'].gt(1)].index[0]
+train_edge_end = df[df['default_split'].gt(0)].index[0]
+val_edge_end = df[df['default_split'].gt(1)].index[0]
 gpu_resident_buffers = torch.cuda.is_available()
 
 if gpu_resident_buffers:

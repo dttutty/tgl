@@ -533,8 +533,8 @@ if args.local_rank < args.num_gpus:
                 torch.distributed.gather_object((y_pred.numpy(), y_true.numpy()), None, dst=args.num_gpus)
 else:
     # hosting process
-    train_edge_end = df[df['ext_roll'].gt(0)].index[0]
-    val_edge_end = df[df['ext_roll'].gt(1)].index[0]
+    train_edge_end = df[df['default_split'].gt(0)].index[0]
+    val_edge_end = df[df['default_split'].gt(1)].index[0]
     sampler = None
     if not ('no_sample' in sample_param and sample_param['no_sample']):
         sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
