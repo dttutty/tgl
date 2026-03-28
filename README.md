@@ -95,6 +95,48 @@ source scripts/uv-env.sh
 python train_non_timing_on_gpu.py --data <NameOfYourDataset> --config <PathToConfigFile>
 ```
 
+### Running accuracy experiments on Blackwell
+
+The launchers under `accuracy_experiment/` start nested Python commands. Some of
+the shell wrappers, including
+[`accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh`](accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh),
+fall back to `.venv/bin/python` unless `PYTHON_BIN` is set explicitly.
+
+For the Blackwell stack, do not launch these jobs with `uv run` or
+`uv run --active`. Keep the runtime inside `.venv-blackwell` and point the
+experiment wrapper at that interpreter explicitly:
+
+```bash
+source .venv-blackwell/bin/activate
+source scripts/uv-env.sh
+export PYTHON_BIN="$PWD/.venv-blackwell/bin/python"
+```
+
+The AP comparison experiment in
+[`accuracy_experiment/compare_ap_tgl_vs_frost/0_run.yaml`](accuracy_experiment/compare_ap_tgl_vs_frost/0_run.yaml)
+uses exactly 2 GPUs per job, so run it through
+[`accuracy_experiment/run_on_gpu_pairs.py`](accuracy_experiment/run_on_gpu_pairs.py):
+
+```bash
+python accuracy_experiment/run_on_gpu_pairs.py \
+  --script accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh
+```
+
+Optional flags:
+
+- `--gpus 0,1` to restrict the scheduler to a specific adjacent GPU pair
+- `-- --dataset CANPARL` to forward a dataset filter into the task script
+
+Single-GPU experiment schedulers such as
+[`accuracy_experiment/freshness/0_run.sh`](accuracy_experiment/freshness/0_run.sh)
+should use
+[`accuracy_experiment/run_on_one_gpu.py`](accuracy_experiment/run_on_one_gpu.py):
+
+```bash
+python accuracy_experiment/run_on_one_gpu.py \
+  --script accuracy_experiment/freshness/0_run.sh
+```
+
 ## Configuration Files
 
 We provide example configuration files for five temporal GNN methods: JODIE, DySAT, TGAT, TGN and TGAT. The configuration files for single GPU training are located at `/config/` while the multiple GPUs training configuration files are located at `/config/dist/`.
