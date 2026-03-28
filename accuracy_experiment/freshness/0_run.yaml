@@ -3,8 +3,7 @@ models:
     config: config/TGN.yml
 
 datasets:
-  - name: LASTFM
-    extra_args: "--rand_edge_features 128"
+  [CANPARL  CONTACTS  ENRON  FLIGHTS  LASTFM  MOOC  REDDIT  SOCIALEVO  UCI  UNTRADE  UNVOTE  USLEGIS  WIKIPEDIA ]
 
 delays:
   # - 0

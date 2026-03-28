@@ -61,14 +61,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$EMIT_JOBS" -eq 0 ]]; then
-    runner_args=(--script "$0")
-    if [[ "${#FORWARD_ARGS[@]}" -gt 0 ]]; then
-        runner_args+=(--gpus "${FORWARD_ARGS[0]}")
-        if [[ "${#FORWARD_ARGS[@]}" -gt 1 ]]; then
-            runner_args+=(-- "${FORWARD_ARGS[@]:1}")
-        fi
+    # 读取 datasets 列表
+    DATASETS=($(grep -oP '^datasets:\s*\[\K[^\]]+' "$CONFIG_PATH" | tr -d ' '))
+    if [[ ${#DATASETS[@]} -eq 0 ]]; then
+        echo "No datasets found in $CONFIG_PATH" >&2
+        exit 1
     fi
-    exec "$RUNNER" "${runner_args[@]}"
+
+    for DATASET in ${DATASETS[@]}; do
+        runner_args=(--script "$0" --dataset "$DATASET")
+        if [[ "${#FORWARD_ARGS[@]}" -gt 0 ]]; then
+            runner_args+=(--gpus "${FORWARD_ARGS[0]}")
+            if [[ "${#FORWARD_ARGS[@]}" -gt 1 ]]; then
+                runner_args+=(-- "${FORWARD_ARGS[@]:1}")
+            fi
+        fi
+        echo "Running for dataset: $DATASET"
+        "$RUNNER" "${runner_args[@]}"
+    done
+    exit 0
 fi
 
 PYTHON_BIN="$(resolve_python_bin)"
