@@ -35,7 +35,7 @@ if __name__ == '__main__':
     g = np.load('DATA/{}/full_graph_with_reverse_edges.npz'.format(args.data))
     sample_config = yaml.safe_load(open(args.config, 'r'))['sampling'][0]
 
-    sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
+    sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.int64),
                               args.num_thread, 1, sample_config['layer'], sample_config['neighbor'],
                               sample_config['strategy']=='recent', sample_config['prop_time'],
                               sample_config['history'], float(sample_config['duration']))
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     ) if args.tqdm else df.groupby(df.index // args.batch_size)
     for _, rows in row_iter:
         root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-        ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+        ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.int64)
         sampler.sample(root_nodes, ts)
         ret = sampler.get_ret()
         tot_time += ret[0].tot_time()

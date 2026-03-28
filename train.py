@@ -85,7 +85,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
 lr_scheduler = create_train_lr_scheduler(optimizer, train_param, default_monitor='val_ap')
 sampler = None
 if not ('no_sample' in sample_param and sample_param['no_sample']):
-    sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
+    sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.int64),
                               sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                               sample_param['strategy']=='recent', sample_param['prop_time'],
                               sample_param['history'], float(sample_param['duration']))
@@ -121,7 +121,7 @@ def eval(mode='val'):
         total_loss = 0
         for _, rows in eval_df.groupby(eval_df.index // train_param['batch_size']):
             root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows) * neg_samples)]).astype(np.int32)
-            ts = np.tile(rows.time.values, neg_samples + 2).astype(np.float32)
+            ts = np.tile(rows.time.values, neg_samples + 2).astype(np.int64)
             if sampler is not None:
                 if 'no_neg' in sample_param and sample_param['no_neg']:
                     pos_root_end = len(rows) * 2
@@ -217,7 +217,7 @@ for e in range(train_param['epoch']):
     for _, rows in df[:train_edge_end].groupby(df[:train_edge_end].index // train_param['batch_size']):
         t_tot_s = time.time()
         root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-        ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+        ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.int64)
         if sampler is not None:
             t_sample_s = time.perf_counter()
             if 'no_neg' in sample_param and sample_param['no_neg']:

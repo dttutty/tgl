@@ -211,13 +211,13 @@ def to_dgl_blocks(ret, hist, reverse=False, cuda=True):
         if not reverse:
             b = dgl.create_block((r.col(), r.row()), num_src_nodes=r.dim_in(), num_dst_nodes=r.dim_out())
             b.srcdata['ID'] = torch.from_numpy(r.nodes())
-            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_dst_nodes():]
-            b.srcdata['ts'] = torch.from_numpy(r.ts())
+            b.edata['dt'] = torch.from_numpy(r.dts()).to(torch.int64)[b.num_dst_nodes():]
+            b.srcdata['ts'] = torch.from_numpy(r.ts()).to(torch.int64)
         else:
             b = dgl.create_block((r.row(), r.col()), num_src_nodes=r.dim_out(), num_dst_nodes=r.dim_in())
             b.dstdata['ID'] = torch.from_numpy(r.nodes())
-            b.edata['dt'] = torch.from_numpy(r.dts())[b.num_src_nodes():]
-            b.dstdata['ts'] = torch.from_numpy(r.ts())
+            b.edata['dt'] = torch.from_numpy(r.dts()).to(torch.int64)[b.num_src_nodes():]
+            b.dstdata['ts'] = torch.from_numpy(r.ts()).to(torch.int64)
         b.edata['ID'] = torch.from_numpy(r.eid())
         if cuda:
             mfgs.append(b.to('cuda:0'))
@@ -231,7 +231,7 @@ def node_to_dgl_blocks(root_nodes, ts, cuda=True):
     mfgs = list()
     b = dgl.create_block(([],[]), num_src_nodes=root_nodes.shape[0], num_dst_nodes=root_nodes.shape[0])
     b.srcdata['ID'] = torch.from_numpy(root_nodes)
-    b.srcdata['ts'] = torch.from_numpy(ts)
+    b.srcdata['ts'] = torch.from_numpy(ts).to(torch.int64)
     if cuda:
         mfgs.insert(0, [b.to('cuda:0')])
     else:

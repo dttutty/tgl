@@ -91,9 +91,9 @@ mailbox = None
 if memory_param['type'] != 'none':
     if args.local_rank == 0:
         node_memory = create_shared_mem_array(shm_name('node_memory'), torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
-        node_memory_ts = create_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.float32)
+        node_memory_ts = create_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.int64)
         mails = create_shared_mem_array(shm_name('mails'), torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = create_shared_mem_array(shm_name('mail_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        mail_ts = create_shared_mem_array(shm_name('mail_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.int64)
         next_mail_pos = create_shared_mem_array(shm_name('next_mail_pos'), torch.Size([num_nodes]), dtype=torch.long)
         update_mail_pos = create_shared_mem_array(shm_name('update_mail_pos'), torch.Size([num_nodes]), dtype=torch.int32)
         torch.distributed.barrier()
@@ -106,9 +106,9 @@ if memory_param['type'] != 'none':
     else:
         torch.distributed.barrier()
         node_memory = get_shared_mem_array(shm_name('node_memory'), torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
-        node_memory_ts = get_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.float32)
+        node_memory_ts = get_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.int64)
         mails = get_shared_mem_array(shm_name('mails'), torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = get_shared_mem_array(shm_name('mail_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        mail_ts = get_shared_mem_array(shm_name('mail_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.int64)
         next_mail_pos = get_shared_mem_array(shm_name('next_mail_pos'), torch.Size([num_nodes]), dtype=torch.long)
         update_mail_pos = get_shared_mem_array(shm_name('update_mail_pos'), torch.Size([num_nodes]), dtype=torch.int32)
     mailbox = MailBox(memory_param, num_nodes, dim_feats[4], node_memory, node_memory_ts, mails, mail_ts, next_mail_pos, update_mail_pos)
@@ -228,7 +228,7 @@ else:
     val_edge_end = df[df['default_split'].gt(1)].index[0]
     sampler = None
     if not ('no_sample' in sample_param and sample_param['no_sample']):
-        sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
+        sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.int64),
                                   sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                                   sample_param['strategy']=='recent', sample_param['prop_time'],
                                   sample_param['history'], float(sample_param['duration']))
@@ -255,7 +255,7 @@ else:
                     break
                 rows = df[processed_edge_id:min(len(df), processed_edge_id + train_param['batch_size'])]
                 root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-                ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+                ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.int64)
                 if sampler is not None:
                     if 'no_neg' in sample_param and sample_param['no_neg']:
                         pos_root_end = root_nodes.shape[0] * 2 // 3
@@ -311,7 +311,7 @@ else:
     ) if args.tqdm else ldf.groupby(ldf.index // args.batch_size)
     for _, rows in emb_iter:
         root_nodes = rows.node.values.astype(np.int32)
-        ts = rows.time.values.astype(np.float32)
+        ts = rows.time.values.astype(np.int64)
         if args.data == 'MAG':
             # allow paper to sample neighbors
             ts += 1
