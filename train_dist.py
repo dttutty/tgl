@@ -60,6 +60,14 @@ from df_split import make_balance_plan
 from shm_naming import init_run_id, build_shm_namer
 import torch.distributed as dist # 确保已有或添加
 from torch.profiler import profile, record_function, ProfilerActivity # 新增
+from frost_data import (
+    FrostBatchNegLinkSampler,
+    compute_split_boundaries,
+    load_dataset_counts,
+    load_edges_df,
+    load_feat as load_frost_feat,
+    load_graph as load_frost_graph,
+)
 
 if args.seed is not None:
     set_seed(args.seed)
@@ -86,7 +94,14 @@ nccl_group = None
 nccl_group = torch.distributed.new_group(ranks=list(range(args.num_gpus)), backend='nccl')
 
 if args.local_rank == 0:
-    _node_feats, _edge_feats = load_feat(d=args.dataset, rand_de=args.rnd_edim, rand_dn=args.rnd_ndim,)
+    _num_nodes, _num_edges = load_dataset_counts(args.dataset)
+    _node_feats, _edge_feats = load_frost_feat(
+        args.dataset,
+        args.rnd_edim,
+        args.rnd_ndim,
+        num_nodes=_num_nodes,
+        num_edges=_num_edges,
+    )
 dim_feats = [0, 0, 0, 0, 0, 0]
 if args.local_rank == 0:
     if _node_feats is not None:
@@ -127,7 +142,8 @@ torch.distributed.broadcast_object_list(path_saver, src=0)
 path_saver = path_saver[0]
 
 if args.local_rank == args.num_gpus:
-    g, df = load_graph(args.dataset)
+    g = load_frost_graph(args.dataset)
+    df = load_edges_df(args.dataset)
     num_nodes = [g['indptr'].shape[0] - 1]
 else:
     num_nodes = [None]
@@ -139,9 +155,9 @@ mailbox = None
 if memory_param['type'] != 'none':
     if args.local_rank == 0:
         node_memory = create_shared_mem_array(shm_name('node_memory'), torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
-        node_memory_ts = create_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.float32)
+        node_memory_ts = create_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.int64)
         mails = create_shared_mem_array(shm_name('mails'), torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = create_shared_mem_array(shm_name('mails_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        mail_ts = create_shared_mem_array(shm_name('mails_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.int64)
         next_mail_pos = create_shared_mem_array(shm_name('next_mail_pos'), torch.Size([num_nodes]), dtype=torch.long)
         update_mail_pos = create_shared_mem_array(shm_name('update_mail_pos'), torch.Size([num_nodes]), dtype=torch.int32)
         torch.distributed.barrier()
@@ -154,9 +170,9 @@ if memory_param['type'] != 'none':
     else:
         torch.distributed.barrier()
         node_memory = get_shared_mem_array(shm_name('node_memory'), torch.Size([num_nodes, memory_param['dim_out']]), dtype=torch.float32)
-        node_memory_ts = get_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.float32)
+        node_memory_ts = get_shared_mem_array(shm_name('node_memory_ts'), torch.Size([num_nodes]), dtype=torch.int64)
         mails = get_shared_mem_array(shm_name('mails'), torch.Size([num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_feats[4]]), dtype=torch.float32)
-        mail_ts = get_shared_mem_array(shm_name('mails_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.float32)
+        mail_ts = get_shared_mem_array(shm_name('mails_ts'), torch.Size([num_nodes, memory_param['mailbox_size']]), dtype=torch.int64)
         next_mail_pos = get_shared_mem_array(shm_name('next_mail_pos'), torch.Size([num_nodes]), dtype=torch.long)
         update_mail_pos = get_shared_mem_array(shm_name('update_mail_pos'), torch.Size([num_nodes]), dtype=torch.int32)
     mailbox = MailBox(memory_param, num_nodes, dim_feats[4], node_memory, node_memory_ts, mails, mail_ts, next_mail_pos, update_mail_pos, strict_avoid_rc=args.strict_avoid_rc, rank=args.local_rank, num_gpus=args.num_gpus, nccl_group=nccl_group)
@@ -417,7 +433,7 @@ if args.local_rank < args.num_gpus:
                 if mailbox is not None:
                     with torch.no_grad():
                         eid = prev_thread.get_eid()
-                        mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
+                        mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
                         root_nodes = prev_thread.get_root()
                         ts = prev_thread.get_ts()
                         block = prev_thread.get_block()
@@ -467,7 +483,7 @@ if args.local_rank < args.num_gpus:
                 if mailbox is not None:
                     with torch.no_grad():
                         eid = prev_thread.get_eid()
-                        mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
+                        mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
                         root_nodes = prev_thread.get_root()
                         ts = prev_thread.get_ts()
                         block = prev_thread.get_block()
@@ -501,7 +517,7 @@ if args.local_rank < args.num_gpus:
                     torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
                     torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
                     eid = my_eid[0]
-                    mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
+                    mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
                     root_nodes = my_root[0]
                     ts = my_ts[0]
                     block = None
@@ -533,15 +549,17 @@ if args.local_rank < args.num_gpus:
                 torch.distributed.gather_object((y_pred.numpy(), y_true.numpy()), None, dst=args.num_gpus)
 else:
     # hosting process
-    train_edge_end = df[df['default_split'].gt(0)].index[0]
-    val_edge_end = df[df['default_split'].gt(1)].index[0]
+    train_edge_end, val_edge_end = compute_split_boundaries(df)
     sampler = None
     if not ('no_sample' in sample_param and sample_param['no_sample']):
-        sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
+        sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'],
                                   sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                                   sample_param['strategy']=='recent', sample_param['prop_time'],
-                                  sample_param['history'], float(sample_param['duration']))
-    neg_link_sampler = NegLinkSampler(g['indptr'].shape[0] - 1)
+                                  sample_param['history'], int(sample_param['duration']))
+    neg_link_sampler = FrostBatchNegLinkSampler(
+        dataset=args.dataset,
+        n_nodes=g['indptr'].shape[0] - 1,
+    )
 
     def eval(mode='val'):
         if mode == 'val':
@@ -575,8 +593,13 @@ else:
                 rows = df_out[mask]
                 
                 if len(rows) > 0:
-                    root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-                    ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+                    batch_src = rows.src.to_numpy(dtype=np.int64, copy=False)
+                    batch_dst = rows.dst.to_numpy(dtype=np.int64, copy=False)
+                    batch_eid = rows.eid.to_numpy(dtype=np.int64, copy=False)
+                    batch_ts = rows.time.to_numpy(dtype=np.int64, copy=False)
+                    neg_dst = neg_link_sampler.sample(batch_src, batch_eid)
+                    root_nodes = np.concatenate([batch_src, batch_dst, neg_dst]).astype(np.int32)
+                    ts = np.concatenate([batch_ts, batch_ts, batch_ts]).astype(np.int64)
                     if sampler is not None:
                         if 'no_neg' in sample_param and sample_param['no_neg']:
                             pos_root_end = root_nodes.shape[0] * 2 // 3
@@ -591,7 +614,7 @@ else:
                     multi_mfgs.append(mfgs)
                     multi_root.append(root_nodes)
                     multi_ts.append(ts)
-                    multi_eid.append(rows['Unnamed: 0'].values)
+                    multi_eid.append(batch_eid)
                     if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
                         multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
             
@@ -702,8 +725,13 @@ else:
                 rows = df_out[mask]
                 
                 if len(rows) > 0:
-                    root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-                    ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+                    batch_src = rows.src.to_numpy(dtype=np.int64, copy=False)
+                    batch_dst = rows.dst.to_numpy(dtype=np.int64, copy=False)
+                    batch_eid = rows.eid.to_numpy(dtype=np.int64, copy=False)
+                    batch_ts = rows.time.to_numpy(dtype=np.int64, copy=False)
+                    neg_dst = neg_link_sampler.sample(batch_src, batch_eid)
+                    root_nodes = np.concatenate([batch_src, batch_dst, neg_dst]).astype(np.int32)
+                    ts = np.concatenate([batch_ts, batch_ts, batch_ts]).astype(np.int64)
                     if sampler is not None:
                         if 'no_neg' in sample_param and sample_param['no_neg']:
                             pos_root_end = root_nodes.shape[0] * 2 // 3
@@ -719,7 +747,7 @@ else:
                     multi_mfgs.append(mfgs)
                     multi_root.append(root_nodes)
                     multi_ts.append(ts)
-                    multi_eid.append(rows['Unnamed: 0'].values)
+                    multi_eid.append(batch_eid)
                     if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
                         multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
             

@@ -21,6 +21,13 @@ if args.memory_update_delay_batches < 0:
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
+from frost_data import validate_strict_negative_mode
+
+validate_strict_negative_mode(
+    use_inductive=args.use_inductive,
+    eval_neg_samples=args.eval_neg_samples,
+)
+
 import torch
 import time
 import dgl
@@ -29,6 +36,13 @@ from modules import *
 from sampler import *
 from utils import *
 from sklearn.metrics import average_precision_score, roc_auc_score
+from frost_data import (
+    FrostBatchNegLinkSampler,
+    compute_split_boundaries,
+    load_edges_df,
+    load_feat as load_frost_feat,
+    load_graph as load_frost_graph,
+)
 
 if args.seed is not None:
     set_seed(args.seed)
@@ -42,10 +56,16 @@ print_run_configuration(
     train_param,
     config_path=args.config,
 )
-node_feats, edge_feats = load_feat(args.data, args.rand_edge_features, args.rand_node_features)
-g, df = load_graph(args.data)
-train_edge_end = df[df['default_split'].gt(0)].index[0]
-val_edge_end = df[df['default_split'].gt(1)].index[0]
+g = load_frost_graph(args.data)
+df = load_edges_df(args.data)
+train_edge_end, val_edge_end = compute_split_boundaries(df)
+node_feats, edge_feats = load_frost_feat(
+    args.data,
+    args.rand_edge_features,
+    args.rand_node_features,
+    num_nodes=g['indptr'].shape[0] - 1,
+    num_edges=len(df),
+)
 gpu_resident_buffers = torch.cuda.is_available()
 
 if gpu_resident_buffers:
@@ -92,10 +112,10 @@ optimizer = torch.optim.Adam(model.parameters(), lr=train_param['lr'])
 lr_scheduler = create_train_lr_scheduler(optimizer, train_param, default_monitor='val_ap')
 sampler = None
 if not ('no_sample' in sample_param and sample_param['no_sample']):
-    sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.float32),
+    sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'],
                               sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                               sample_param['strategy']=='recent', sample_param['prop_time'],
-                              sample_param['history'], float(sample_param['duration']))
+                              sample_param['history'], int(sample_param['duration']))
 
 if args.use_inductive:
     test_df = df[val_edge_end:]
@@ -103,7 +123,10 @@ if args.use_inductive:
     print("inductive nodes", len(inductive_nodes))
     neg_link_sampler = NegLinkInductiveSampler(inductive_nodes)
 else:
-    neg_link_sampler = NegLinkSampler(g['indptr'].shape[0] - 1)
+    neg_link_sampler = FrostBatchNegLinkSampler(
+        dataset=args.data,
+        n_nodes=g['indptr'].shape[0] - 1,
+    )
 
 use_pinned_buffers = args.pin_memory and not gpu_resident_buffers
 
@@ -115,7 +138,6 @@ else:
     pinned_nfeat_buffs, pinned_efeat_buffs = None, None
 
 def eval(mode='val'):
-    neg_samples = 1
     model.eval()
     aps = list()
     aucs_mrrs = list()
@@ -123,14 +145,18 @@ def eval(mode='val'):
         eval_df = df[train_edge_end:val_edge_end]
     elif mode == 'test':
         eval_df = df[val_edge_end:]
-        neg_samples = args.eval_neg_samples
     elif mode == 'train':
         eval_df = df[:train_edge_end]
     with torch.no_grad():
         total_loss = 0
         for _, rows in eval_df.groupby(eval_df.index // train_param['batch_size']):
-            root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows) * neg_samples)]).astype(np.int32)
-            ts = np.tile(rows.time.values, neg_samples + 2).astype(np.float32)
+            batch_src = rows.src.to_numpy(dtype=np.int64, copy=False)
+            batch_dst = rows.dst.to_numpy(dtype=np.int64, copy=False)
+            batch_eid = rows.eid.to_numpy(dtype=np.int64, copy=False)
+            batch_ts = rows.time.to_numpy(dtype=np.int64, copy=False)
+            neg_dst = neg_link_sampler.sample(batch_src, batch_eid)
+            root_nodes = np.concatenate([batch_src, batch_dst, neg_dst]).astype(np.int32)
+            ts = np.tile(batch_ts, 3).astype(np.int64)
             if sampler is not None:
                 if 'no_neg' in sample_param and sample_param['no_neg']:
                     pos_root_end = len(rows) * 2
@@ -150,31 +176,25 @@ def eval(mode='val'):
                           nids=nids if use_pinned_buffers else None, eids=eids if use_pinned_buffers else None)
             if mailbox is not None:
                 mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=use_pinned_buffers)
-            pred_pos, pred_neg = model(mfgs, neg_samples=neg_samples)
+            pred_pos, pred_neg = model(mfgs, neg_samples=1)
             total_loss += creterion(pred_pos, torch.ones_like(pred_pos))
             total_loss += creterion(pred_neg, torch.zeros_like(pred_neg))
             y_pred = torch.cat([pred_pos, pred_neg], dim=0).sigmoid().cpu()
             y_true = torch.cat([torch.ones(pred_pos.size(0)), torch.zeros(pred_neg.size(0))], dim=0)
             aps.append(average_precision_score(y_true, y_pred))
-            if neg_samples > 1:
-                aucs_mrrs.append(torch.reciprocal(torch.sum(pred_pos.squeeze() < pred_neg.squeeze().reshape(neg_samples, -1), dim=0) + 1).type(torch.float))
-            else:
-                aucs_mrrs.append(roc_auc_score(y_true, y_pred))
+            aucs_mrrs.append(roc_auc_score(y_true, y_pred))
             if mailbox is not None:
-                eid = rows['Unnamed: 0'].values
+                eid = rows['eid'].to_numpy(dtype=np.int64, copy=False)
                 mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
                 block = None
                 if memory_param['deliver_to'] == 'neighbors':
                     block = to_dgl_blocks(ret, sample_param['history'], reverse=True)[0][0]
-                mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block, neg_samples=neg_samples)
-                mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts, neg_samples=neg_samples)
+                mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block, neg_samples=1)
+                mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts, neg_samples=1)
         if mode == 'val':
             val_losses.append(float(total_loss))
     ap = float(torch.tensor(aps).mean())
-    if neg_samples > 1:
-        auc_mrr = float(torch.cat(aucs_mrrs).mean())
-    else:
-        auc_mrr = float(torch.tensor(aucs_mrrs).mean())
+    auc_mrr = float(torch.tensor(aucs_mrrs).mean())
     return ap, auc_mrr
 
 if args.model_name == '':
@@ -210,8 +230,13 @@ for e in range(train_param['epoch']):
         mailbox.update_memory(task['nid'], task['memory'], task['root_nodes'], task['updated_ts'])
 
     for _, rows in df[:train_edge_end].groupby(df[:train_edge_end].index // train_param['batch_size']):
-        root_nodes = np.concatenate([rows.src.values, rows.dst.values, neg_link_sampler.sample(len(rows))]).astype(np.int32)
-        ts = np.concatenate([rows.time.values, rows.time.values, rows.time.values]).astype(np.float32)
+        batch_src = rows.src.to_numpy(dtype=np.int64, copy=False)
+        batch_dst = rows.dst.to_numpy(dtype=np.int64, copy=False)
+        batch_eid = rows.eid.to_numpy(dtype=np.int64, copy=False)
+        batch_ts = rows.time.to_numpy(dtype=np.int64, copy=False)
+        neg_dst = neg_link_sampler.sample(batch_src, batch_eid)
+        root_nodes = np.concatenate([batch_src, batch_dst, neg_dst]).astype(np.int32)
+        ts = np.concatenate([batch_ts, batch_ts, batch_ts]).astype(np.int64)
         if sampler is not None:
             if 'no_neg' in sample_param and sample_param['no_neg']:
                 pos_root_end = root_nodes.shape[0] * 2 // 3
@@ -239,7 +264,7 @@ for e in range(train_param['epoch']):
         loss.backward()
         optimizer.step()
         if mailbox is not None:
-            eid = rows['Unnamed: 0'].values
+            eid = rows['eid'].to_numpy(dtype=np.int64, copy=False)
             mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
             block = None
             if memory_param['deliver_to'] == 'neighbors':

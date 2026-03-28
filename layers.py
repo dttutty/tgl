@@ -20,6 +20,7 @@ class TimeEncode(torch.nn.Module):
         self.w.bias = torch.nn.Parameter(torch.zeros(dim))
 
     def forward(self, t):
+        t = t.to(dtype=torch.float32)
         output = torch.cos(self.w(t.reshape((-1, 1))))
         return output
 
@@ -162,7 +163,13 @@ class TransfomerAttentionLayer(torch.nn.Module):
             return torch.zeros((b.num_dst_nodes(), self.dim_out), device=torch.device('cuda:0'))
         if self.dim_time > 0:
             time_feat = self.time_enc(b.edata['dt'])
-            zero_time_feat = self.time_enc(torch.zeros(b.num_dst_nodes(), dtype=torch.float32, device=torch.device('cuda:0')))
+            zero_time_feat = self.time_enc(
+                torch.zeros(
+                    b.num_dst_nodes(),
+                    dtype=b.edata['dt'].dtype,
+                    device=b.edata['dt'].device,
+                )
+            )
         if self.combined:
             Q = torch.zeros((b.num_edges(), self.dim_out), device=torch.device('cuda:0'))
             K = torch.zeros((b.num_edges(), self.dim_out), device=torch.device('cuda:0'))

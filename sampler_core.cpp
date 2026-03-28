@@ -1,6 +1,8 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#include <cstdint>
+#include <algorithm>
 #include <random>
 #include <omp.h>
 #include <math.h>
@@ -12,7 +14,7 @@ namespace py = pybind11;
 
 typedef int NodeIDType;
 typedef int EdgeIDType;
-typedef float TimeStampType;
+typedef int64_t TimeStampType;
 
 class TemporalGraphBlock
 {
@@ -101,7 +103,7 @@ class ParallelSampler
         }
 
         void update_ts_ptr(int slc, std::vector<NodeIDType> &root_nodes, 
-                           std::vector<TimeStampType> &root_ts, float offset)
+                           std::vector<TimeStampType> &root_ts, TimeStampType offset)
         {
 #pragma omp parallel for schedule(static, int(ceil(static_cast<float>(root_nodes.size()) / num_threads)))
             for (std::vector<NodeIDType>::size_type i = 0; i < root_nodes.size(); i++)
@@ -110,8 +112,7 @@ class ParallelSampler
                 omp_set_lock(&(ts_ptr_lock[n]));
                 for (std::vector<EdgeIDType>::size_type j = ts_ptr[slc][n]; j < indptr[n + 1]; j++)
                 {
-                    // std::cout << "comparing " << ts[j] << " with " << root_ts[i] << std::endl;
-                    if (ts[j] > (root_ts[i] + offset - 1e-7f))
+                    if (ts[j] >= (root_ts[i] + offset))
                     {
                         if (j != ts_ptr[slc][n])
                             ts_ptr[slc][n] = j - 1;
@@ -222,7 +223,7 @@ class ParallelSampler
                 }
                 TimeStampType offset = -i * window_duration;
                 t_ptr_s = omp_get_wtime();
-                if ((use_ptr) && (std::abs(window_duration) > 1e-7f))
+                if ((use_ptr) && (window_duration != 0))
                     update_ts_ptr(num_history - 1 - i, *root_nodes, *root_ts, offset - window_duration);
                 ret[0].ptr_time += omp_get_wtime() - t_ptr_s;
                 std::vector<NodeIDType> *_row[num_threads];
@@ -272,8 +273,11 @@ class ParallelSampler
                             {
                                 // TGAT style
                                 s_search = indptr[n];
-                                auto e_it = std::upper_bound(ts.begin() + indptr[n], 
-                                                             ts.begin() + indptr[n + 1], nts);
+                                auto e_it = std::lower_bound(
+                                    ts.begin() + indptr[n],
+                                    ts.begin() + indptr[n + 1],
+                                    nts
+                                );
                                 e_search = std::max(int(e_it - ts.begin()) - 1, s_search);
                             }
                             else
@@ -283,8 +287,11 @@ class ParallelSampler
                                                              ts.begin() + indptr[n + 1],
                                                              nts + offset - window_duration);
                                 s_search = std::max(int(s_it - ts.begin()) - 1, indptr[n]);
-                                auto e_it = std::upper_bound(ts.begin() + indptr[n],
-                                                             ts.begin() + indptr[n + 1], nts + offset);
+                                auto e_it = std::lower_bound(
+                                    ts.begin() + indptr[n],
+                                    ts.begin() + indptr[n + 1],
+                                    nts + offset
+                                );
                                 e_search = std::max(int(e_it - ts.begin()) - 1, s_search);
                             }
                             if (tid == 0)
@@ -297,7 +304,7 @@ class ParallelSampler
                             // no sampling, pick recent neighbors
                             for (EdgeIDType k = e_search; k > std::max(s_search, e_search - neighs); k--)
                             {
-                                if (ts[k] < nts + offset - 1e-7f)
+                                if (ts[k] < nts + offset)
                                 {
                                     add_neighbor(_row[tid], _col[tid], _eid[tid], _ts[tid], 
                                                  _dts[tid], _nodes[tid], k, nts, _out_node[tid]);
@@ -310,7 +317,7 @@ class ParallelSampler
                             for (int _i = 0; _i < neighs; _i++)
                             {
                                 EdgeIDType picked = s_search + rand_r(&loc_seed) % (e_search - s_search + 1);
-                                if (ts[picked] < nts + offset - 1e-7f)
+                                if (ts[picked] < nts + offset)
                                 {
                                     add_neighbor(_row[tid], _col[tid], _eid[tid], _ts[tid], 
                                                  _dts[tid], _nodes[tid], picked, nts, _out_node[tid]);

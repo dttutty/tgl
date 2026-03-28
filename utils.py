@@ -260,7 +260,7 @@ def prepare_input(mfgs, node_feats, edge_feats, combine_first=False, pinned=Fals
             if mfgs[0][i].num_src_nodes() > mfgs[0][i].num_dst_nodes():
                 num_dst = mfgs[0][i].num_dst_nodes()
                 ts = mfgs[0][i].srcdata['ts'][num_dst:]
-                nid = mfgs[0][i].srcdata['ID'][num_dst:].float()
+                nid = mfgs[0][i].srcdata['ID'][num_dst:].to(ts.dtype)
                 nts = torch.stack([ts, nid], dim=1)
                 unts, idx = torch.unique(nts, dim=0, return_inverse=True)
                 uts = unts[:, 0]

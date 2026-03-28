@@ -16,9 +16,9 @@ class MailBox():
         if memory_param['type'] != 'node':
             raise NotImplementedError
         self.node_memory = torch.zeros((num_nodes, memory_param['dim_out']), dtype=torch.float32) if _node_memory is None else _node_memory
-        self.node_memory_ts = torch.zeros(num_nodes, dtype=torch.float32) if _node_memory_ts is None else _node_memory_ts
+        self.node_memory_ts = torch.zeros(num_nodes, dtype=torch.int64) if _node_memory_ts is None else _node_memory_ts
         self.mailbox = torch.zeros((num_nodes, memory_param['mailbox_size'], 2 * memory_param['dim_out'] + dim_edge_feat), dtype=torch.float32) if _mailbox is None else _mailbox
-        self.mailbox_ts = torch.zeros((num_nodes, memory_param['mailbox_size']), dtype=torch.float32) if _mailbox_ts is None else _mailbox_ts
+        self.mailbox_ts = torch.zeros((num_nodes, memory_param['mailbox_size']), dtype=torch.int64) if _mailbox_ts is None else _mailbox_ts
         self.next_mail_pos = torch.zeros((num_nodes), dtype=torch.long) if _next_mail_pos is None else _next_mail_pos
         self.update_mail_pos = _update_mail_pos
         self.device = torch.device('cpu')
@@ -56,9 +56,17 @@ class MailBox():
         self.pinned_mailbox_ts_buffs = list()
         for _ in range(sample_param['history']):
             self.pinned_node_memory_buffs.append(torch.zeros((limit, self.node_memory.shape[1]), pin_memory=True))
-            self.pinned_node_memory_ts_buffs.append(torch.zeros((limit,), pin_memory=True))
+            self.pinned_node_memory_ts_buffs.append(
+                torch.zeros((limit,), dtype=self.node_memory_ts.dtype, pin_memory=True)
+            )
             self.pinned_mailbox_buffs.append(torch.zeros((limit, self.mailbox.shape[1], self.mailbox.shape[2]), pin_memory=True))
-            self.pinned_mailbox_ts_buffs.append(torch.zeros((limit, self.mailbox_ts.shape[1]), pin_memory=True))
+            self.pinned_mailbox_ts_buffs.append(
+                torch.zeros(
+                    (limit, self.mailbox_ts.shape[1]),
+                    dtype=self.mailbox_ts.dtype,
+                    pin_memory=True,
+                )
+            )
 
     def prep_input_mails(self, mfg, use_pinned_buffers=False):
         for i, b in enumerate(mfg):
@@ -326,4 +334,3 @@ class TransformerMemoryUpdater(torch.nn.Module):
             self.last_updated_memory = rst.detach().clone()
             self.last_updated_nid = b.srcdata['ID'].detach().clone()
             self.last_updated_ts = b.srcdata['ts'].detach().clone()
-
