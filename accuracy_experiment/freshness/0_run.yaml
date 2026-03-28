@@ -3,7 +3,19 @@ models:
     config: config/TGN.yml
 
 datasets:
-  [CANPARL  CONTACTS  ENRON  FLIGHTS  LASTFM  MOOC  REDDIT  SOCIALEVO  UCI  UNTRADE  UNVOTE  USLEGIS  WIKIPEDIA ]
+  - CANPARL
+  - CONTACTS
+  - ENRON
+  - FLIGHTS
+  - LASTFM
+  - MOOC
+  - REDDIT
+  - SOCIALEVO
+  - UCI
+  - UNTRADE
+  - UNVOTE
+  - USLEGIS
+  - WIKIPEDIA
 
 delays:
   # - 0

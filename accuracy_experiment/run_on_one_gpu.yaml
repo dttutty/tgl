@@ -2,5 +2,5 @@ max_concurrent_jobs: 16
 est_mem_per_job_mb: 5000
 min_free_mem_mb: 1500
 sched_poll_secs: 30
-post_launch_wait_secs: 300
+post_launch_wait_secs: 60
 fallback_gpus: "0,1"

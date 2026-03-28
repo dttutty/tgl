@@ -9,6 +9,7 @@ TMP_CONFIG_DIR="$LOG_DIR/tmp_configs"
 CONFIG_PATH="$SCRIPT_DIR/0_run.yaml"
 RUNNER="$REPO_ROOT/accuracy_experiment/run_on_one_gpu.py"
 USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
+ROW_SEP=$'\x1f'
 
 usage() {
     cat <<'EOF'
@@ -40,7 +41,48 @@ resolve_python_bin() {
     fi
 }
 
+load_dataset_names() {
+    local config_path="$1"
+    local dataset_filter="${2:-}"
+
+    "$PYTHON_BIN" - "$config_path" "$dataset_filter" <<'PY'
+import sys
+import yaml
+
+config_path = sys.argv[1]
+dataset_filter = sys.argv[2] or None
+
+with open(config_path, "r", encoding="utf-8") as f:
+    conf = yaml.safe_load(f) or {}
+
+datasets = conf.get("datasets") or []
+if not isinstance(datasets, list):
+    raise RuntimeError("0_run.yaml `datasets` must be a list")
+
+matched = 0
+for dataset in datasets:
+    if isinstance(dataset, str):
+        dataset_name = dataset
+    elif isinstance(dataset, dict):
+        dataset_name = dataset.get("name")
+    else:
+        raise RuntimeError("Each dataset entry must be either a string or a mapping with `name`")
+
+    if not dataset_name:
+        raise RuntimeError("Each dataset entry must define a non-empty dataset name")
+    if dataset_filter and dataset_name != dataset_filter:
+        continue
+
+    print(dataset_name)
+    matched += 1
+
+if dataset_filter and matched == 0:
+    raise RuntimeError(f"Dataset not found in {config_path}: {dataset_filter}")
+PY
+}
+
 EMIT_JOBS=0
+DATASET_FILTER=""
 FORWARD_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -48,6 +90,14 @@ while [[ $# -gt 0 ]]; do
         --emit-jobs)
             EMIT_JOBS=1
             shift
+            ;;
+        --dataset)
+            if [[ $# -lt 2 ]]; then
+                echo "--dataset requires a value" >&2
+                exit 1
+            fi
+            DATASET_FILTER="$2"
+            shift 2
             ;;
         --help|-h)
             usage
@@ -61,14 +111,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$EMIT_JOBS" -eq 0 ]]; then
-    # 读取 datasets 列表
-    DATASETS=($(grep -oP '^datasets:\s*\[\K[^\]]+' "$CONFIG_PATH" | tr -d ' '))
+    PYTHON_BIN="$(resolve_python_bin)"
+    if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+        PYTHON_BIN="$(command -v "$PYTHON_BIN")"
+    fi
+
+    mapfile -t DATASETS < <(load_dataset_names "$CONFIG_PATH" "$DATASET_FILTER")
     if [[ ${#DATASETS[@]} -eq 0 ]]; then
         echo "No datasets found in $CONFIG_PATH" >&2
         exit 1
     fi
 
-    for DATASET in ${DATASETS[@]}; do
+    for DATASET in "${DATASETS[@]}"; do
         runner_args=(--script "$0" --dataset "$DATASET")
         if [[ "${#FORWARD_ARGS[@]}" -gt 0 ]]; then
             runner_args+=(--gpus "${FORWARD_ARGS[0]}")
@@ -151,11 +205,12 @@ PY
 }
 
 load_experiment_rows() {
-    "$PYTHON_BIN" - "$CONFIG_PATH" <<'PY'
+    "$PYTHON_BIN" - "$CONFIG_PATH" "$DATASET_FILTER" <<'PY'
 import sys
 import yaml
 
 config_path = sys.argv[1]
+dataset_filter = sys.argv[2] or None
 with open(config_path, "r", encoding="utf-8") as f:
     conf = yaml.safe_load(f) or {}
 
@@ -199,9 +254,30 @@ else:
 
 seed_count = len(seeds)
 
+matched_datasets = 0
 for dataset in datasets:
-    dataset_name = dataset["name"]
-    extra_args = dataset.get("extra_args", "")
+    if isinstance(dataset, str):
+        dataset_name = dataset
+        extra_args = ""
+    elif isinstance(dataset, dict):
+        dataset_name = dataset.get("name")
+        if not dataset_name:
+            raise RuntimeError("Each dataset mapping must define a non-empty `name`")
+        extra_args = dataset.get("extra_args", "")
+    else:
+        raise RuntimeError("Each dataset entry must be either a string or a mapping with `name`")
+
+    if extra_args is None:
+        extra_args = ""
+    elif isinstance(extra_args, list):
+        extra_args = " ".join(str(arg) for arg in extra_args)
+    else:
+        extra_args = str(extra_args)
+
+    if dataset_filter and dataset_name != dataset_filter:
+        continue
+
+    matched_datasets += 1
     for model in models:
         model_name = model["name"]
         model_config = model["config"]
@@ -210,7 +286,7 @@ for dataset in datasets:
                 for delay in delays:
                     for seed in seeds:
                         print(
-                            "\t".join(
+                            "\x1f".join(
                                 [
                                     model_name,
                                     model_config,
@@ -225,6 +301,9 @@ for dataset in datasets:
                                 ]
                             )
                         )
+
+if dataset_filter and matched_datasets == 0:
+    raise RuntimeError(f"Dataset not found in {config_path}: {dataset_filter}")
 PY
 }
 
@@ -236,11 +315,11 @@ if [[ "${#experiment_rows[@]}" -eq 0 ]]; then
 fi
 
 first_row="${experiment_rows[0]}"
-IFS=$'\t' read -r _ _ _ _ _ _ _ _ SEED_COUNT TARGET_EPOCH <<< "$first_row"
+IFS="$ROW_SEP" read -r _ _ _ _ _ _ _ _ SEED_COUNT TARGET_EPOCH <<< "$first_row"
 declare -A seen_batch_sizes
 batch_size_list=()
 for row in "${experiment_rows[@]}"; do
-    IFS=$'\t' read -r _ _ _ _ _ _ _ batch_size _ _ <<< "$row"
+    IFS="$ROW_SEP" read -r _ _ _ _ _ _ _ batch_size _ _ <<< "$row"
     if [[ -z "${seen_batch_sizes[$batch_size]:-}" ]]; then
         seen_batch_sizes[$batch_size]=1
         batch_size_list+=("$batch_size")
@@ -258,7 +337,7 @@ echo "Seeds per experiment: $SEED_COUNT" >&2
 declare -A prepared_dim_configs
 
 for row in "${experiment_rows[@]}"; do
-    IFS=$'\t' read -r model config dataset extra dim_out delay seed batch_size seed_count target_epoch <<< "$row"
+    IFS="$ROW_SEP" read -r model config dataset extra dim_out delay seed batch_size seed_count target_epoch <<< "$row"
     extra_args=()
     if [[ -n "$extra" ]]; then
         read -r -a extra_args <<< "$extra"

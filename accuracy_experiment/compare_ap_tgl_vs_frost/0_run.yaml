@@ -2,7 +2,20 @@ models:
   - name: TGN
     config: config/TGN.yml
 
-datasets: [CANPARL  CONTACTS  ENRON  FLIGHTS  LASTFM  MOOC  REDDIT  SOCIALEVO  UCI  UNTRADE  UNVOTE  USLEGIS  WIKIPEDIA ]
+datasets:
+  - CANPARL
+  - CONTACTS
+  - ENRON
+  - FLIGHTS
+  - LASTFM
+  - MOOC
+  - REDDIT
+  - SOCIALEVO
+  - UCI
+  - UNTRADE
+  - UNVOTE
+  - USLEGIS
+  - WIKIPEDIA
 
 mem_dims:
   - 128
