@@ -25,7 +25,7 @@ class SchedulerConfig:
     est_mem_per_job_mb: int = 5000
     min_free_mem_mb: int = 1500
     sched_poll_secs: int = 30
-    post_launch_wait_secs: int = 300
+    post_launch_wait_secs: int = 60
     fallback_gpus: str = "0,1"
 
 
