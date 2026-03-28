@@ -1,6 +1,6 @@
 models:
-  - name: APAN
-    config: config/APAN.yml
+  - name: TGN
+    config: config/TGN.yml
 
 datasets:
   - CANPARL

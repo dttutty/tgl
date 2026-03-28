@@ -141,6 +141,38 @@ def load_dataset_counts(dataset: str) -> tuple[int, int]:
 
 def _load_feature_tensor(path: Path) -> torch.Tensor:
     if path.suffix == ".npy":
+        # Some dataset snapshots materialize symlinks as tiny text files whose
+        # contents are the relative target path (for example "node_role.npy").
+        # Follow those indirections before handing the file to np.load().
+        seen_paths: set[Path] = set()
+        while True:
+            if path in seen_paths:
+                raise ValueError(f"Detected cyclic feature-path indirection involving {path}")
+            seen_paths.add(path)
+
+            with path.open("rb") as f:
+                prefix = f.read(6)
+
+            if prefix == b"\x93NUMPY":
+                break
+
+            try:
+                alias_text = path.read_text(encoding="utf-8").strip()
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"Feature file {path} is neither a valid NumPy file nor a UTF-8 alias."
+                ) from exc
+
+            if not alias_text:
+                raise ValueError(f"Feature alias file {path} is empty.")
+
+            alias_path = (path.parent / alias_text).resolve()
+            if not alias_path.exists():
+                raise FileNotFoundError(
+                    f"Feature alias file {path} points to missing target {alias_path}."
+                )
+            path = alias_path
+
         arr = np.load(path, allow_pickle=False)
         tensor = torch.from_numpy(arr)
     elif path.suffix == ".pt":

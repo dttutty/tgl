@@ -342,7 +342,6 @@ for row in "${experiment_rows[@]}"; do
         --config "$batch_config"
         --num_gpus "$TASK_NUM_GPUS"
         --omp_num_threads "$OMP_THREADS"
-        --strict_avoid_rc
     )
 
     if [[ "${#extra_args[@]}" -gt 0 ]]; then
