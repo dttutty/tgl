@@ -1,10 +1,13 @@
 import argparse
 import os
+import sys
 import time
 
 start_time = time.time()
 
-parser=argparse.ArgumentParser()
+parser=argparse.ArgumentParser(
+    description='Distributed TGL trainer. Direct invocation auto-launches via torchrun with nproc_per_node=num_gpus+1.'
+)
 parser.add_argument('--dataset', type=str, help='dataset name')
 parser.add_argument('--config', type=str, help='path to config file')
 parser.add_argument(
@@ -23,15 +26,60 @@ parser.add_argument(
 parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
 parser.add_argument('--strict_avoid_rc', action='store_true', default=False, help='serialize memory/mailbox writes across ranks to avoid race conditions')
 args=parser.parse_args()
+
+
+def _launched_via_torchrun() -> bool:
+    return any(name in os.environ for name in ('LOCAL_RANK', 'RANK', 'WORLD_SIZE'))
+
+
+def _relaunch_with_torchrun(num_gpus: int) -> None:
+    if num_gpus < 1:
+        raise RuntimeError(f'--num_gpus must be >= 1, got {num_gpus}.')
+
+    nproc_per_node = num_gpus + 1
+    cmd = [
+        sys.executable,
+        '-m',
+        'torch.distributed.run',
+        '--standalone',
+        f'--nproc_per_node={nproc_per_node}',
+        sys.argv[0],
+        *sys.argv[1:],
+    ]
+    print(
+        f'Auto-launching distributed runner with nproc_per_node={nproc_per_node} '
+        f'for --num_gpus={num_gpus}.'
+    )
+    os.execvpe(sys.executable, cmd, os.environ.copy())
+
+
+if not _launched_via_torchrun():
+    _relaunch_with_torchrun(args.num_gpus)
+
 args.local_rank = 0
 if 'LOCAL_RANK' in os.environ:
     args.local_rank = int(os.environ['LOCAL_RANK'])
+if 'WORLD_SIZE' in os.environ:
+    world_size = int(os.environ['WORLD_SIZE'])
+    expected_world_size = args.num_gpus + 1
+    if world_size != expected_world_size:
+        raise RuntimeError(
+            f'train_dist.py expects WORLD_SIZE={expected_world_size} for --num_gpus={args.num_gpus}, '
+            f'but got WORLD_SIZE={world_size}. Launch with '
+            f'`python -m torch.distributed.run --nproc_per_node={expected_world_size} ...` '
+            'or run this script directly and let it auto-launch.'
+        )
 
 # assign GPUs from externally provided CUDA_VISIBLE_DEVICES
 visible_devices_raw = os.environ.get('CUDA_VISIBLE_DEVICES', '')
 visible_devices = [d.strip() for d in visible_devices_raw.split(',') if d.strip() != '']
 
-if args.num_gpus > 0 and len(visible_devices) < args.num_gpus:
+if not visible_devices:
+    # Default to the first `num_gpus` physical devices when the launcher did
+    # not constrain visibility explicitly.
+    visible_devices = [str(i) for i in range(args.num_gpus)]
+
+if visible_devices_raw and args.num_gpus > 0 and len(visible_devices) < args.num_gpus:
     raise RuntimeError(
         f"Not enough CUDA devices in CUDA_VISIBLE_DEVICES='{visible_devices_raw}'. "
         f"Need at least {args.num_gpus}, but got {len(visible_devices)}."
