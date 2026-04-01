@@ -137,9 +137,10 @@ run_id = init_run_id(args.local_rank, src_rank=0, provided_run_id=args.run_id)
 shm_name = build_shm_namer(run_id)
 
 nccl_group = None
-# if args.local_rank < args.num_gpus:
-    # 这一行移到这里
-nccl_group = torch.distributed.new_group(ranks=list(range(args.num_gpus)), backend='nccl')
+if args.local_rank < args.num_gpus:
+    nccl_group = torch.distributed.new_group(
+        ranks=list(range(args.num_gpus)), backend='nccl'
+    )
 
 if args.local_rank == 0:
     _num_nodes, _num_edges = load_dataset_counts(args.dataset)
