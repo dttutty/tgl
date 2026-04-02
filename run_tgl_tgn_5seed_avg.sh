@@ -8,7 +8,30 @@ cd "$SCRIPT_DIR"
 GPU_ID="${GPU_ID:-1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
+STABLE_MODE="${STABLE_MODE:-false}"
 IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
+
+case "${STABLE_MODE,,}" in
+  1|true|yes|on) STABLE_MODE_ARG=true ;;
+  0|false|no|off) STABLE_MODE_ARG=false ;;
+  *)
+    echo "Invalid STABLE_MODE=${STABLE_MODE}. Use true/false." >&2
+    exit 1
+    ;;
+esac
+
+applied_stable_env=()
+if [[ "$STABLE_MODE_ARG" == "true" ]]; then
+  if [[ -z "${CUDA_DEVICE_MAX_CONNECTIONS+x}" ]]; then
+    export CUDA_DEVICE_MAX_CONNECTIONS=1
+    applied_stable_env+=("CUDA_DEVICE_MAX_CONNECTIONS=1")
+  fi
+  if [[ -z "${CUBLAS_WORKSPACE_CONFIG+x}" ]]; then
+    export CUBLAS_WORKSPACE_CONFIG=:4096:8
+    applied_stable_env+=("CUBLAS_WORKSPACE_CONFIG=:4096:8")
+  fi
+  export FROST_STABLE_MODE=1
+fi
 
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
 RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_tgn_${DATASET,,}_${STAMP}}"
@@ -63,6 +86,10 @@ PY
 echo "Running TGL TGN seed sweep on GPU ${GPU_ID}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
+echo "Stable mode: ${STABLE_MODE_ARG}"
+if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
+  echo "Stable mode env overrides: ${applied_stable_env[*]}"
+fi
 echo "Seeds: ${SEEDS[*]}"
 echo "Temp config: ${TMP_CONFIG}"
 echo "Run directory: ${RUN_DIR}"
