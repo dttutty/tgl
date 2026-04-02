@@ -66,3 +66,4 @@ exp/benchmark_timing/tmp_configs/*
 *.csv
 tmp_configs/
 models/
+seed_sweeps/
