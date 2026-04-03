@@ -17,7 +17,10 @@ EPOCH_PATTERN = re.compile(r"^Epoch (\d+):")
 VAL_PATTERN = re.compile(r"\[VAL\]\s+Global AP:\s*([0-9]*\.?[0-9]+)\s+AUC:\s*([0-9]*\.?[0-9]+)")
 TEST_PATTERN = re.compile(r"\[TEST\]\s+Global AP:\s*([0-9]*\.?[0-9]+)\s+AUC:\s*([0-9]*\.?[0-9]+)")
 TRAIN_PATTERN = re.compile(
-    r"train loss:([0-9]*\.?[0-9]+)\s+val ap:([0-9]*\.?[0-9]+)\s+val auc:([0-9]*\.?[0-9]+)",
+    r"train loss:(?P<train_loss>[0-9]*\.?[0-9]+)\s+"
+    r"val ap:(?P<val_ap>[0-9]*\.?[0-9]+)\s+"
+    r"val auc:(?P<val_auc>[0-9]*\.?[0-9]+)"
+    r"(?:\s+test ap:(?P<test_ap>[0-9]*\.?[0-9]+)\s+test (?:auc|mrr):(?P<test_metric>[0-9]*\.?[0-9]+))?",
     flags=re.IGNORECASE,
 )
 BEST_EPOCH_PATTERN = re.compile(r"Best model at epoch (\d+)\.", flags=re.IGNORECASE)
@@ -70,8 +73,11 @@ def parse_log(log_path: Path) -> ParsedLog:
             continue
 
         train_match = TRAIN_PATTERN.search(line)
-        if train_match and by_epoch[current_epoch].val_ap is None:
-            by_epoch[current_epoch].val_ap = float(train_match.group(2))
+        if train_match:
+            if by_epoch[current_epoch].val_ap is None:
+                by_epoch[current_epoch].val_ap = float(train_match.group("val_ap"))
+            if by_epoch[current_epoch].test_ap is None and train_match.group("test_ap") is not None:
+                by_epoch[current_epoch].test_ap = float(train_match.group("test_ap"))
 
     best_epoch_matches = BEST_EPOCH_PATTERN.findall(text)
     final_test_matches = FINAL_TEST_PATTERN.findall(text)
