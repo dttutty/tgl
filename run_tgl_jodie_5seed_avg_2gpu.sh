@@ -8,6 +8,7 @@ cd "$SCRIPT_DIR"
 GPU_IDS="${GPU_IDS:-0,1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
+BATCH_SIZE="${BATCH_SIZE:-4000}"
 STABLE_MODE="${STABLE_MODE:-true}"
 IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 
@@ -46,7 +47,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sed "0,/epoch: 10/s//epoch: ${EPOCHS}/" config/JODIE.yml > "$TMP_CONFIG"
+sed -e "0,/epoch: 10/s//epoch: ${EPOCHS}/" -e "0,/batch_size: 4000/s//batch_size: ${BATCH_SIZE}/" config/JODIE.yml > "$TMP_CONFIG"
 
 printf "seed\ttest_ap\tlog_path\n" > "$RESULTS_TSV"
 
@@ -86,6 +87,7 @@ PY
 echo "Running TGL JODIE seed sweep on GPUs ${GPU_IDS}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
+echo "Batch size: ${BATCH_SIZE}"
 echo "Stable mode: ${STABLE_MODE_ARG}"
 if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
   echo "Stable mode env overrides: ${applied_stable_env[*]}"
