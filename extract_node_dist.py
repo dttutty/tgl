@@ -231,7 +231,7 @@ else:
         sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.int64),
                                   sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                                   sample_param['strategy']=='recent', sample_param['prop_time'],
-                                  sample_param['history'], float(sample_param['duration']))
+                                  sample_param['history'], int(sample_param['duration']))
     neg_link_sampler = NegLinkSampler(g['indptr'].shape[0] - 1)
 
     ldf = pd.read_csv('DATA/{}/labels.csv'.format(args.data))
@@ -270,7 +270,7 @@ else:
                 multi_mfgs.append(mfgs)
                 multi_root.append(root_nodes)
                 multi_ts.append(ts)
-                multi_eid.append(rows['Unnamed: 0'].values)
+                multi_eid.append(rows['eid'].to_numpy(dtype=np.int64, copy=False) if 'eid' in rows.columns else rows.index.to_numpy(dtype=np.int64, copy=False))
                 if mailbox is not None and memory_param['deliver_to'] == 'neighbors':
                     multi_block.append(to_dgl_blocks(ret, sample_param['history'], reverse=True, cuda=False)[0][0])
                 processed_edge_id += train_param['batch_size']

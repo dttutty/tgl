@@ -77,7 +77,7 @@ if not ('no_sample' in sample_param and sample_param['no_sample']):
     sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.int64),
                               sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                               sample_param['strategy']=='recent', sample_param['prop_time'],
-                              sample_param['history'], float(sample_param['duration']))
+                              sample_param['history'], int(sample_param['duration']))
 
 if args.use_inductive:
     test_df = df[val_edge_end:]
@@ -141,7 +141,7 @@ def eval(mode='val'):
             else:
                 aucs_mrrs.append(roc_auc_score(y_true, y_pred))
             if mailbox is not None:
-                eid = rows['Unnamed: 0'].values
+                eid = rows['eid'].to_numpy(dtype=np.int64, copy=False) if 'eid' in rows.columns else rows.index.to_numpy(dtype=np.int64, copy=False)
                 mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
                 block = None
                 if memory_param['deliver_to'] == 'neighbors':

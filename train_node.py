@@ -87,7 +87,7 @@ if not os.path.isfile('embs/' + emb_file_name):
         sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.int64),
                                   sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                                   sample_param['strategy']=='recent', sample_param['prop_time'],
-                                  sample_param['history'], float(sample_param['duration']))
+                                  sample_param['history'], int(sample_param['duration']))
     neg_link_sampler = NegLinkSampler(g['indptr'].shape[0] - 1)
 
     model.load_state_dict(torch.load(args.model))
@@ -123,7 +123,7 @@ if not os.path.isfile('embs/' + emb_file_name):
             with torch.no_grad():
                 pred_pos, pred_neg = model(mfgs)
                 if mailbox is not None:
-                    eid = rows['Unnamed: 0'].values
+                    eid = rows['eid'].to_numpy(dtype=np.int64, copy=False) if 'eid' in rows.columns else rows.index.to_numpy(dtype=np.int64, copy=False)
                     mem_edge_feats = edge_feats[eid] if edge_feats is not None else None
                     block = None
                     if memory_param['deliver_to'] == 'neighbors':

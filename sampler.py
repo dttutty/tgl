@@ -38,7 +38,7 @@ if __name__ == '__main__':
     sampler = ParallelSampler(g['indptr'], g['indices'], g['eid'], g['ts'].astype(np.int64),
                               args.num_thread, 1, sample_config['layer'], sample_config['neighbor'],
                               sample_config['strategy']=='recent', sample_config['prop_time'],
-                              sample_config['history'], float(sample_config['duration']))
+                              sample_config['history'], int(sample_config['duration']))
 
     num_nodes = max(int(df['src'].max()), int(df['dst'].max()))
     neg_link_sampler = NegLinkSampler(num_nodes)

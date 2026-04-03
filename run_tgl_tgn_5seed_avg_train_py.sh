@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 GPU_ID="${GPU_ID:-1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
-BATCH_SIZE="${BATCH_SIZE:-4000}"
+BATCH_SIZE="${BATCH_SIZE:-200}"
 SAMPLER_THREADS="${SAMPLER_THREADS:-1}"
 STABLE_MODE="${STABLE_MODE:-true}"
 PIN_MEMORY="${PIN_MEMORY:-false}"
@@ -136,7 +136,7 @@ echo "Run directory: ${RUN_DIR}"
 for seed in "${SEEDS[@]}"; do
   log_path="$RUN_DIR/seed_${seed}.log"
   cmd=(
-    uv run python train.py
+    env PYTHONUNBUFFERED=1 uv run python -u train.py
     --data "${DATASET}"
     --config "$TMP_CONFIG"
     --gpu "${GPU_ID}"
