@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 GPU_ID="${GPU_ID:-1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
-STABLE_MODE="${STABLE_MODE:-false}"
+STABLE_MODE="${STABLE_MODE:-true}"
 IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 
 case "${STABLE_MODE,,}" in

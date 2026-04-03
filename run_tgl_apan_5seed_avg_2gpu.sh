@@ -9,7 +9,7 @@ GPU_IDS="${GPU_IDS:-0,1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
 STABLE_MODE="${STABLE_MODE:-true}"
-IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 }"
+IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 
 case "${STABLE_MODE,,}" in
   1|true|yes|on) STABLE_MODE_ARG=true ;;
@@ -34,19 +34,19 @@ if [[ "$STABLE_MODE_ARG" == "true" ]]; then
 fi
 
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
-RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_tgn_${DATASET,,}_2gpu_${STAMP}}"
+RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_apan_${DATASET,,}_2gpu_${STAMP}}"
 mkdir -p "$RUN_DIR"
 
 RESULTS_TSV="$RUN_DIR/results.tsv"
 SUMMARY_TXT="$RUN_DIR/summary.txt"
-TMP_CONFIG="$(mktemp "$RUN_DIR/TGN_XXXXXX.yml")"
+TMP_CONFIG="$(mktemp "$RUN_DIR/APAN_XXXXXX.yml")"
 
 cleanup() {
   rm -f "$TMP_CONFIG"
 }
 trap cleanup EXIT
 
-sed "0,/epoch: 10/s//epoch: ${EPOCHS}/" config/TGN.yml > "$TMP_CONFIG"
+sed "0,/epoch: 10/s//epoch: ${EPOCHS}/" config/APAN.yml > "$TMP_CONFIG"
 
 printf "seed\ttest_ap\tlog_path\n" > "$RESULTS_TSV"
 
@@ -83,7 +83,7 @@ print(f"std_test_ap={stdev:.6f}")
 PY
 }
 
-echo "Running TGL TGN seed sweep on GPUs ${GPU_IDS}"
+echo "Running TGL APAN seed sweep on GPUs ${GPU_IDS}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
 echo "Stable mode: ${STABLE_MODE_ARG}"
@@ -97,7 +97,7 @@ echo "Run directory: ${RUN_DIR}"
 for seed in "${SEEDS[@]}"; do
   log_path="$RUN_DIR/seed_${seed}.log"
   echo
-  echo "=== [TGL 2GPU] seed=${seed} ==="
+  echo "=== [TGL APAN 2GPU] seed=${seed} ==="
   if ! CUDA_VISIBLE_DEVICES="${GPU_IDS}" \
     uv run python train_dist.py \
       --dataset "${DATASET}" \
@@ -114,7 +114,7 @@ for seed in "${SEEDS[@]}"; do
 
   test_ap="$(parse_test_ap "$log_path")"
   printf "%s\t%s\t%s\n" "$seed" "$test_ap" "$log_path" >> "$RESULTS_TSV"
-  echo "[TGL 2GPU] seed=${seed} final_test_ap=${test_ap}"
+  echo "[TGL APAN 2GPU] seed=${seed} final_test_ap=${test_ap}"
 done
 
 mean_test_ap "$RESULTS_TSV" | tee "$SUMMARY_TXT"

@@ -5,11 +5,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-GPU_IDS="${GPU_IDS:-0,1}"
+GPU_ID="${GPU_ID:-1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
+BATCH_SIZE="${BATCH_SIZE:-4000}"
+SAMPLER_THREADS="${SAMPLER_THREADS:-1}"
 STABLE_MODE="${STABLE_MODE:-true}"
-IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 }"
+PIN_MEMORY="${PIN_MEMORY:-false}"
+MEMORY_UPDATE_DELAY_BATCHES="${MEMORY_UPDATE_DELAY_BATCHES:-0}"
+IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 
 case "${STABLE_MODE,,}" in
   1|true|yes|on) STABLE_MODE_ARG=true ;;
@@ -19,6 +23,25 @@ case "${STABLE_MODE,,}" in
     exit 1
     ;;
 esac
+
+case "${PIN_MEMORY,,}" in
+  1|true|yes|on) PIN_MEMORY_ARG=true ;;
+  0|false|no|off) PIN_MEMORY_ARG=false ;;
+  *)
+    echo "Invalid PIN_MEMORY=${PIN_MEMORY}. Use true/false." >&2
+    exit 1
+    ;;
+esac
+
+if ! [[ "$SAMPLER_THREADS" =~ ^[0-9]+$ ]] || [[ "$SAMPLER_THREADS" -lt 1 ]]; then
+  echo "Invalid SAMPLER_THREADS=${SAMPLER_THREADS}. Use an integer >= 1." >&2
+  exit 1
+fi
+
+if ! [[ "$MEMORY_UPDATE_DELAY_BATCHES" =~ ^[0-9]+$ ]]; then
+  echo "Invalid MEMORY_UPDATE_DELAY_BATCHES=${MEMORY_UPDATE_DELAY_BATCHES}. Use an integer >= 0." >&2
+  exit 1
+fi
 
 applied_stable_env=()
 if [[ "$STABLE_MODE_ARG" == "true" ]]; then
@@ -30,11 +53,19 @@ if [[ "$STABLE_MODE_ARG" == "true" ]]; then
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
     applied_stable_env+=("CUBLAS_WORKSPACE_CONFIG=:4096:8")
   fi
+  if [[ -z "${OMP_NUM_THREADS+x}" ]]; then
+    export OMP_NUM_THREADS=1
+    applied_stable_env+=("OMP_NUM_THREADS=1")
+  fi
+  if [[ -z "${MKL_NUM_THREADS+x}" ]]; then
+    export MKL_NUM_THREADS=1
+    applied_stable_env+=("MKL_NUM_THREADS=1")
+  fi
   export FROST_STABLE_MODE=1
 fi
 
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
-RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_tgn_${DATASET,,}_2gpu_${STAMP}}"
+RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_tgn_train_py_${DATASET,,}_${STAMP}}"
 mkdir -p "$RUN_DIR"
 
 RESULTS_TSV="$RUN_DIR/results.tsv"
@@ -46,7 +77,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sed "0,/epoch: 10/s//epoch: ${EPOCHS}/" config/TGN.yml > "$TMP_CONFIG"
+sed \
+  -e "0,/epoch: 10/s//epoch: ${EPOCHS}/" \
+  -e "0,/batch_size: 4000/s//batch_size: ${BATCH_SIZE}/" \
+  -e "0,/num_thread: 32/s//num_thread: ${SAMPLER_THREADS}/" \
+  config/TGN.yml > "$TMP_CONFIG"
 
 printf "seed\ttest_ap\tlog_path\n" > "$RESULTS_TSV"
 
@@ -58,7 +93,7 @@ import re
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore")
-matches = re.findall(r"^\s*test ap:([0-9.]+)\s+test auc:[0-9.]+", text, re.IGNORECASE | re.MULTILINE)
+matches = re.findall(r"^\s*test ap:([0-9.]+)\s+test (?:auc|mrr):[0-9.]+", text, re.IGNORECASE | re.MULTILINE)
 if not matches:
     raise SystemExit(f"Could not parse final test ap from {sys.argv[1]}")
 print(matches[-1])
@@ -83,9 +118,13 @@ print(f"std_test_ap={stdev:.6f}")
 PY
 }
 
-echo "Running TGL TGN seed sweep on GPUs ${GPU_IDS}"
+echo "Running TGL TGN seed sweep via train.py on GPU ${GPU_ID}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
+echo "Batch size: ${BATCH_SIZE}"
+echo "Sampler threads: ${SAMPLER_THREADS}"
+echo "Pin memory: ${PIN_MEMORY_ARG}"
+echo "Memory update delay batches: ${MEMORY_UPDATE_DELAY_BATCHES}"
 echo "Stable mode: ${STABLE_MODE_ARG}"
 if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
   echo "Stable mode env overrides: ${applied_stable_env[*]}"
@@ -96,25 +135,30 @@ echo "Run directory: ${RUN_DIR}"
 
 for seed in "${SEEDS[@]}"; do
   log_path="$RUN_DIR/seed_${seed}.log"
+  cmd=(
+    uv run python train.py
+    --data "${DATASET}"
+    --config "$TMP_CONFIG"
+    --gpu "${GPU_ID}"
+    --seed "${seed}"
+    --rand_edge_features 0
+    --rand_node_features 0
+    --memory_update_delay_batches "${MEMORY_UPDATE_DELAY_BATCHES}"
+  )
+  if [[ "$PIN_MEMORY_ARG" == "true" ]]; then
+    cmd+=(--pin_memory)
+  fi
+
   echo
-  echo "=== [TGL 2GPU] seed=${seed} ==="
-  if ! CUDA_VISIBLE_DEVICES="${GPU_IDS}" \
-    uv run python train_dist.py \
-      --dataset "${DATASET}" \
-      --config "$TMP_CONFIG" \
-      --num_gpus 2 \
-      --seed "${seed}" \
-      --rnd_edim 0 \
-      --rnd_ndim 0 \
-      --tqdm \
-      2>&1 | tee "$log_path"; then
+  echo "=== [TGL TGN train.py] seed=${seed} ==="
+  if ! "${cmd[@]}" 2>&1 | tee "$log_path"; then
     echo "Run failed for seed=${seed}. See ${log_path}" >&2
     exit 1
   fi
 
   test_ap="$(parse_test_ap "$log_path")"
   printf "%s\t%s\t%s\n" "$seed" "$test_ap" "$log_path" >> "$RESULTS_TSV"
-  echo "[TGL 2GPU] seed=${seed} final_test_ap=${test_ap}"
+  echo "[TGL TGN train.py] seed=${seed} final_test_ap=${test_ap}"
 done
 
 mean_test_ap "$RESULTS_TSV" | tee "$SUMMARY_TXT"
