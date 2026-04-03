@@ -21,7 +21,10 @@ TRAIN_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 BEST_EPOCH_PATTERN = re.compile(r"Best model at epoch (\d+)\.", flags=re.IGNORECASE)
-FINAL_TEST_PATTERN = re.compile(r"test ap:([0-9]*\.?[0-9]+)\s+test auc:([0-9]*\.?[0-9]+)", flags=re.IGNORECASE)
+FINAL_TEST_PATTERN = re.compile(
+    r"test\s+ap:\s*([0-9]*\.?[0-9]+)\s+test\s+(?:auc|mrr):\s*([0-9]*\.?[0-9]+)",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass
@@ -127,12 +130,23 @@ def plot_log(parsed: ParsedLog, output_path: Path, dpi: int) -> None:
         ax.plot(val_x, val_y, label="Val AP", color="#2ca02c", linewidth=2.0, marker="o", markersize=3)
     if test_x:
         ax.plot(test_x, test_y, label="Test AP", color="#ff7f0e", linewidth=1.8, marker="s", markersize=3, alpha=0.9)
+    elif parsed.best_test_ap is not None:
+        ax.axhline(
+            parsed.best_test_ap,
+            label=f"Best Test AP {parsed.best_test_ap:.4f}",
+            color="#ff7f0e",
+            linewidth=1.5,
+            linestyle=":",
+            alpha=0.9,
+        )
 
     if parsed.best_epoch is not None:
         ax.axvline(parsed.best_epoch, color="#444444", linestyle="--", linewidth=1.0, alpha=0.8, label=f"Best epoch {parsed.best_epoch}")
 
     if peak_val_epoch is not None and peak_val_ap is not None:
         ax.scatter([peak_val_epoch], [peak_val_ap], color="#2ca02c", s=30, zorder=3)
+    if parsed.best_epoch is not None and parsed.best_test_ap is not None:
+        ax.scatter([parsed.best_epoch], [parsed.best_test_ap], color="#ff7f0e", s=35, zorder=3)
 
     ax.set_xlabel("Epoch")
     ax.set_ylabel("AP")

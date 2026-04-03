@@ -313,7 +313,17 @@ for e in range(train_param['epoch']):
         best_ap = ap
         best_test_ap = test_ap
         best_test_auc = test_auc
-    print('\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}'.format(total_loss, ap, auc))
+    test_metric_name = 'test mrr' if args.eval_neg_samples > 1 else 'test auc'
+    print(
+        '\ttrain loss:{:.4f}  val ap:{:4f}  val auc:{:4f}  test ap:{:4f}  {}:{:4f}'.format(
+            total_loss,
+            ap,
+            auc,
+            test_ap,
+            test_metric_name,
+            test_auc,
+        )
+    )
     if lr_scheduler_step is not None:
         print('\t{}'.format(format_lr_scheduler_step(lr_scheduler_step)))
     print('\ttotal time:{:.2f}s sample:{:.2f}s fetch feature:{:.2f}s fetch memory:{:.2f}s forward:{:.2f}s backward:{:.2f}s memory update:{:.2f}s'.format(
