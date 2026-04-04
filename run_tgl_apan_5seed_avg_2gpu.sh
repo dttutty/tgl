@@ -9,6 +9,14 @@ GPU_IDS="${GPU_IDS:-0,1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
 STABLE_MODE="${STABLE_MODE:-true}"
+
+REPO_ROOT="${SCRIPT_DIR}/../.."
+# shellcheck source=../../DATA/dataset_defaults.sh
+source "${REPO_ROOT}/DATA/dataset_defaults.sh"
+
+N_GPU="$(tr ',' '\n' <<< "${GPU_IDS}" | grep -c .)"
+MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-$(default_macro_batch_size "${DATASET}")}"
+BATCH_SIZE="${BATCH_SIZE:-$(( MACRO_BATCH_SIZE / N_GPU ))}"
 IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 
 case "${STABLE_MODE,,}" in
@@ -46,7 +54,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sed "0,/epoch: 10/s//epoch: ${EPOCHS}/" config/APAN.yml > "$TMP_CONFIG"
+sed \
+  -e "0,/epoch: 10/s//epoch: ${EPOCHS}/" \
+  -e "s/batch_size: [0-9]*/batch_size: ${BATCH_SIZE}/" \
+  config/APAN.yml > "$TMP_CONFIG"
 
 printf "seed\ttest_ap\tlog_path\n" > "$RESULTS_TSV"
 
@@ -86,6 +97,7 @@ PY
 echo "Running TGL APAN seed sweep on GPUs ${GPU_IDS}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
+echo "Macro batch size: ${MACRO_BATCH_SIZE} (${BATCH_SIZE} per GPU)"
 echo "Stable mode: ${STABLE_MODE_ARG}"
 if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
   echo "Stable mode env overrides: ${applied_stable_env[*]}"

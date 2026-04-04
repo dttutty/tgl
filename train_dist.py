@@ -154,6 +154,7 @@ if args.local_rank == 0:
 dim_feats = [0, 0, 0, 0, 0, 0]
 if args.local_rank == 0:
     if _node_feats is not None:
+        _node_feats = _node_feats.float()
         dim_feats[0] = _node_feats.shape[0]
         dim_feats[1] = _node_feats.shape[1]
         dim_feats[2] = _node_feats.dtype
@@ -163,6 +164,7 @@ if args.local_rank == 0:
     else:
         node_feats = None
     if _edge_feats is not None:
+        _edge_feats = _edge_feats.float()
         dim_feats[3] = _edge_feats.shape[0]
         dim_feats[4] = _edge_feats.shape[1]
         dim_feats[5] = _edge_feats.dtype

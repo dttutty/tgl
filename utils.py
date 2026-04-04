@@ -347,8 +347,8 @@ def get_pinned_buffers(sample_param, batch_size, node_feats, edge_feats):
             limit *= i + 1
             if edge_feats is not None:
                 for _ in range(sample_param['history']):
-                    pinned_efeat_buffs.insert(0, torch.zeros((limit, edge_feats.shape[1]), pin_memory=True))
+                    pinned_efeat_buffs.insert(0, torch.zeros((limit, edge_feats.shape[1]), dtype=edge_feats.dtype, pin_memory=True))
     if node_feats is not None:
         for _ in range(sample_param['history']):
-            pinned_nfeat_buffs.insert(0, torch.zeros((limit, node_feats.shape[1]), pin_memory=True))
+            pinned_nfeat_buffs.insert(0, torch.zeros((limit, node_feats.shape[1]), dtype=node_feats.dtype, pin_memory=True))
     return pinned_nfeat_buffs, pinned_efeat_buffs

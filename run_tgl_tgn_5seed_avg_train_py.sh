@@ -8,8 +8,14 @@ cd "$SCRIPT_DIR"
 GPU_ID="${GPU_ID:-1}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
-BATCH_SIZE="${BATCH_SIZE:-200}"
 SAMPLER_THREADS="${SAMPLER_THREADS:-1}"
+
+REPO_ROOT="${SCRIPT_DIR}/../.."
+# shellcheck source=../../DATA/dataset_defaults.sh
+source "${REPO_ROOT}/DATA/dataset_defaults.sh"
+
+MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-$(default_macro_batch_size "${DATASET}")}"
+BATCH_SIZE="${BATCH_SIZE:-${MACRO_BATCH_SIZE}}"
 STABLE_MODE="${STABLE_MODE:-true}"
 PIN_MEMORY="${PIN_MEMORY:-false}"
 MEMORY_UPDATE_DELAY_BATCHES="${MEMORY_UPDATE_DELAY_BATCHES:-0}"
@@ -79,7 +85,7 @@ trap cleanup EXIT
 
 sed \
   -e "0,/epoch: 10/s//epoch: ${EPOCHS}/" \
-  -e "0,/batch_size: 4000/s//batch_size: ${BATCH_SIZE}/" \
+  -e "s/batch_size: [0-9]*/batch_size: ${BATCH_SIZE}/" \
   -e "0,/num_thread: 32/s//num_thread: ${SAMPLER_THREADS}/" \
   config/TGN.yml > "$TMP_CONFIG"
 
@@ -121,7 +127,7 @@ PY
 echo "Running TGL TGN seed sweep via train.py on GPU ${GPU_ID}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
-echo "Batch size: ${BATCH_SIZE}"
+echo "Macro batch size: ${MACRO_BATCH_SIZE} (${BATCH_SIZE} per GPU)"
 echo "Sampler threads: ${SAMPLER_THREADS}"
 echo "Pin memory: ${PIN_MEMORY_ARG}"
 echo "Memory update delay batches: ${MEMORY_UPDATE_DELAY_BATCHES}"

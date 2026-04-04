@@ -8,8 +8,14 @@ cd "$SCRIPT_DIR"
 GPU_ID="${GPU_ID:-0}"
 DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
-BATCH_SIZE="${BATCH_SIZE:-4000}"
 STABLE_MODE="${STABLE_MODE:-true}"
+
+REPO_ROOT="${SCRIPT_DIR}/../.."
+# shellcheck source=../../DATA/dataset_defaults.sh
+source "${REPO_ROOT}/DATA/dataset_defaults.sh"
+
+MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-$(default_macro_batch_size "${DATASET}")}"
+BATCH_SIZE="${BATCH_SIZE:-${MACRO_BATCH_SIZE}}"
 IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 
 case "${STABLE_MODE,,}" in
@@ -49,7 +55,7 @@ trap cleanup EXIT
 
 sed \
   -e "0,/epoch: 10/s//epoch: ${EPOCHS}/" \
-  -e "0,/batch_size: 4000/s//batch_size: ${BATCH_SIZE}/" \
+  -e "s/batch_size: [0-9]*/batch_size: ${BATCH_SIZE}/" \
   config/APAN.yml > "$TMP_CONFIG"
 
 printf "seed\ttest_ap\tlog_path\n" > "$RESULTS_TSV"
@@ -90,7 +96,7 @@ PY
 echo "Running TGL APAN seed sweep on GPU ${GPU_ID}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
-echo "Batch size: ${BATCH_SIZE}"
+echo "Macro batch size: ${MACRO_BATCH_SIZE} (${BATCH_SIZE} per GPU)"
 echo "Stable mode: ${STABLE_MODE_ARG}"
 if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
   echo "Stable mode env overrides: ${applied_stable_env[*]}"
