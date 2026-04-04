@@ -10,25 +10,26 @@ GPU_IDS="${GPU_IDS:-0,1}"
 MODEL="${MODEL:-tgn}"
 STABLE_MODE="${STABLE_MODE:-true}"
 
-# 模型特定默认值
+# 全局默认值
+DATASET="${DATASET:-MOOC}"
+EPOCHS="${EPOCHS:-100}"
+
+# 模型特定配置
 case "${MODEL,,}" in
   apan)
-    DATASET="${DATASET:-LASTFM}"
-    EPOCHS="${EPOCHS:-100}"
     CONFIG_FILE="config/APAN.yml"
     ;;
   jodie)
-    DATASET="${DATASET:-LASTFM}"
-    EPOCHS="${EPOCHS:-100}"
     CONFIG_FILE="config/JODIE.yml"
     ;;
   tgn)
-    DATASET="${DATASET:-MOOC}"
-    EPOCHS="${EPOCHS:-100}"
     CONFIG_FILE="config/TGN.yml"
     ;;
+  dyrep)
+    CONFIG_FILE="config/DyREP.yml"
+    ;;
   *)
-    echo "Unknown model: ${MODEL}. Supported models: apan, jodie, tgn" >&2
+    echo "Unknown model: ${MODEL}. Supported models: apan, jodie, tgn, dyrep" >&2
     exit 1
     ;;
 esac
