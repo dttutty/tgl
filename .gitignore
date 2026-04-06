@@ -66,4 +66,14 @@ exp/benchmark_timing/tmp_configs/*
 *.csv
 tmp_configs/
 models/
-seed_sweeps/
+
+# 先忽略 seed_sweeps 下所有内容
+seed_sweeps/**
+
+# 但目录本身要重新放开，不然没法继续匹配子文件
+!seed_sweeps/
+!seed_sweeps/**/
+
+# 放行所有 summary.txt 和 results.csv
+!seed_sweeps/**/summary.txt
+!seed_sweeps/**/results.csv
