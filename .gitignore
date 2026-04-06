@@ -77,3 +77,4 @@ seed_sweeps/**
 # 放行所有 summary.txt 和 results.csv
 !seed_sweeps/**/summary.txt
 !seed_sweeps/**/results.csv
+!seed_sweeps/**/results.tsv
