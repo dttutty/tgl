@@ -9,6 +9,7 @@ TMP_CONFIG_DIR="$LOG_DIR/tmp_configs"
 CONFIG_PATH="$SCRIPT_DIR/0_run.yaml"
 RUNNER="$REPO_ROOT/accuracy_experiment/run_on_one_gpu.py"
 USER_PREFIX="${LOG_USER_PREFIX:-${USER:-$(id -un)}_${HOSTNAME:-$(hostname -s)}}"
+STABLE_MODE="${STABLE_MODE:-true}"
 ROW_SEP=$'\x1f'
 
 usage() {
@@ -21,6 +22,7 @@ This script defines freshness experiment jobs.
 When called normally, it delegates scheduling to accuracy_experiment/run_on_one_gpu.py.
 When called with --emit-jobs, it prints job definitions for the scheduler.
 Experiment settings are loaded from accuracy_experiment/freshness/0_run.yaml.
+Set `STABLE_MODE=true|false` to control the stabilization env overrides.
 Use `seeds:` in the YAML to enumerate exact seeds for each run.
 Use `batch_sizes:` in the YAML to enumerate exact batch sizes for each run.
 EOF
@@ -110,6 +112,28 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+case "${STABLE_MODE,,}" in
+    1|true|yes|on) STABLE_MODE_ARG=true ;;
+    0|false|no|off) STABLE_MODE_ARG=false ;;
+    *)
+        echo "Invalid STABLE_MODE=${STABLE_MODE}. Use true/false." >&2
+        exit 1
+        ;;
+esac
+
+applied_stable_env=()
+if [[ "$STABLE_MODE_ARG" == "true" ]]; then
+    if [[ -z "${CUDA_DEVICE_MAX_CONNECTIONS+x}" ]]; then
+        export CUDA_DEVICE_MAX_CONNECTIONS=1
+        applied_stable_env+=("CUDA_DEVICE_MAX_CONNECTIONS=1")
+    fi
+    if [[ -z "${CUBLAS_WORKSPACE_CONFIG+x}" ]]; then
+        export CUBLAS_WORKSPACE_CONFIG=:4096:8
+        applied_stable_env+=("CUBLAS_WORKSPACE_CONFIG=:4096:8")
+    fi
+    export FROST_STABLE_MODE=1
+fi
+
 if [[ "$EMIT_JOBS" -eq 0 ]]; then
     PYTHON_BIN="$(resolve_python_bin)"
     if command -v "$PYTHON_BIN" >/dev/null 2>&1; then
@@ -120,6 +144,11 @@ if [[ "$EMIT_JOBS" -eq 0 ]]; then
     if [[ ${#DATASETS[@]} -eq 0 ]]; then
         echo "No datasets found in $CONFIG_PATH" >&2
         exit 1
+    fi
+
+    echo "Stable mode: $STABLE_MODE_ARG"
+    if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
+        echo "Stable mode env overrides: ${applied_stable_env[*]}"
     fi
 
     for DATASET in "${DATASETS[@]}"; do
@@ -333,6 +362,10 @@ echo "Config: $CONFIG_PATH" >&2
 echo "Batch sizes per run: $batch_size_summary" >&2
 echo "Epoch per run: $TARGET_EPOCH" >&2
 echo "Seeds per experiment: $SEED_COUNT" >&2
+echo "Stable mode: $STABLE_MODE_ARG" >&2
+if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
+    echo "Stable mode env overrides: ${applied_stable_env[*]}" >&2
+fi
 
 declare -A prepared_dim_configs
 
@@ -359,6 +392,7 @@ for row in "${experiment_rows[@]}"; do
         --config "$dim_config"
         --model_name "${model}_${dataset}_dim${dim_out}_delay${delay}_seed${seed}_pin"
         --seed "$seed"
+        --rand_edge_features 0
         --pin_memory
         --memory_update_delay_batches "$delay"
         --gpu "__RUN_ON_ONE_GPU_ASSIGNED_GPU__"
