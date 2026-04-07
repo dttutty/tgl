@@ -176,7 +176,16 @@ def eval(mode='val'):
                 block = None
                 if memory_param['deliver_to'] == 'neighbors':
                     block = to_dgl_blocks(ret, sample_param['history'], reverse=True)[0][0]
-                mailbox.update_mailbox(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, ts, mem_edge_feats, block, neg_samples=1)
+                mailbox.update_mailbox(
+                    model.memory_updater.last_updated_nid,
+                    model.memory_updater.last_updated_memory,
+                    root_nodes,
+                    ts,
+                    mem_edge_feats,
+                    block,
+                    neg_samples=1,
+                    peer_memory=getattr(model, 'last_mail_peer_memory', None),
+                )
                 mailbox.update_memory(model.memory_updater.last_updated_nid, model.memory_updater.last_updated_memory, root_nodes, model.memory_updater.last_updated_ts, neg_samples=1)
         if mode == 'val':
             val_losses.append(float(total_loss))
@@ -213,7 +222,15 @@ for e in range(train_param['epoch']):
             return
         if task['nid'] is None or task['memory'] is None or task['updated_ts'] is None:
             return
-        mailbox.update_mailbox(task['nid'], task['memory'], task['root_nodes'], task['ts'], task['mem_edge_feats'], task['block'])
+        mailbox.update_mailbox(
+            task['nid'],
+            task['memory'],
+            task['root_nodes'],
+            task['ts'],
+            task['mem_edge_feats'],
+            task['block'],
+            peer_memory=task.get('peer_memory'),
+        )
         mailbox.update_memory(task['nid'], task['memory'], task['root_nodes'], task['updated_ts'])
 
     for _, rows in df[:train_edge_end].groupby(df[:train_edge_end].index // train_param['batch_size']):
@@ -265,6 +282,7 @@ for e in range(train_param['epoch']):
                 'ts': ts.copy(),
                 'mem_edge_feats': mem_edge_feats.detach().clone() if mem_edge_feats is not None else None,
                 'block': block,
+                'peer_memory': model.last_mail_peer_memory.detach().clone() if getattr(model, 'last_mail_peer_memory', None) is not None else None,
             })
 
             if len(memory_update_queue) > args.memory_update_delay_batches:

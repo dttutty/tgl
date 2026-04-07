@@ -7,8 +7,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$SCRIPT_SOURCE")"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 PAIR_RUNNER="$REPO_ROOT/scripts/run_on_gpu_pairs.py"
-ASSIGNED_GPU_PAIR_TOKEN="__RUN_ON_GPU_PAIR_ASSIGNED_GPUS__"
-
 usage() {
   cat <<'EOF'
 Usage:
@@ -350,7 +348,7 @@ emit_jobs() {
         desc="TGL ${model^^} ${dataset} seed=${seed}"
         cmd="$(shell_join \
           env \
-          "GPU_IDS=${ASSIGNED_GPU_PAIR_TOKEN}" \
+          "GPU_IDS=" \
           "MODEL=${model}" \
           "DATASET=${dataset}" \
           "MACRO_BATCH_SIZE=${MACRO_BATCH_SIZE}" \

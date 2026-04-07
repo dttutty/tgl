@@ -14,12 +14,16 @@ import matplotlib.pyplot as plt
 
 
 EPOCH_PATTERN = re.compile(r"^Epoch (\d+):")
-VAL_PATTERN = re.compile(r"\[VAL\]\s+Global AP:\s*([0-9]*\.?[0-9]+)\s+AUC:\s*([0-9]*\.?[0-9]+)")
-TEST_PATTERN = re.compile(r"\[TEST\]\s+Global AP:\s*([0-9]*\.?[0-9]+)\s+AUC:\s*([0-9]*\.?[0-9]+)")
+VAL_PATTERN = re.compile(
+    r"\[VAL\]\s+Global AP:\s*([0-9]*\.?[0-9]+)\s+AUC:\s*([0-9]*\.?[0-9]+)"
+)
+TEST_PATTERN = re.compile(
+    r"\[TEST\]\s+Global AP:\s*([0-9]*\.?[0-9]+)\s+AUC:\s*([0-9]*\.?[0-9]+)"
+)
 TRAIN_PATTERN = re.compile(
     r"train loss:(?P<train_loss>[0-9]*\.?[0-9]+)\s+"
     r"val ap:(?P<val_ap>[0-9]*\.?[0-9]+)\s+"
-    r"val auc:(?P<val_auc>[0-9]*\.?[0-9]+)"
+    r"val auc:(?P<val_auc>[0-9]*\.?[0-9]+),?"
     r"(?:\s+test ap:(?P<test_ap>[0-9]*\.?[0-9]+)\s+test (?:auc|mrr):(?P<test_metric>[0-9]*\.?[0-9]+))?",
     flags=re.IGNORECASE,
 )
@@ -76,7 +80,10 @@ def parse_log(log_path: Path) -> ParsedLog:
         if train_match:
             if by_epoch[current_epoch].val_ap is None:
                 by_epoch[current_epoch].val_ap = float(train_match.group("val_ap"))
-            if by_epoch[current_epoch].test_ap is None and train_match.group("test_ap") is not None:
+            if (
+                by_epoch[current_epoch].test_ap is None
+                and train_match.group("test_ap") is not None
+            ):
                 by_epoch[current_epoch].test_ap = float(train_match.group("test_ap"))
 
     best_epoch_matches = BEST_EPOCH_PATTERN.findall(text)
@@ -90,7 +97,9 @@ def parse_log(log_path: Path) -> ParsedLog:
     )
 
 
-def metric_series(epochs: list[EpochMetrics], field: str) -> tuple[list[int], list[float]]:
+def metric_series(
+    epochs: list[EpochMetrics], field: str
+) -> tuple[list[int], list[float]]:
     xs: list[int] = []
     ys: list[float] = []
     for epoch_metrics in epochs:
@@ -102,7 +111,9 @@ def metric_series(epochs: list[EpochMetrics], field: str) -> tuple[list[int], li
     return xs, ys
 
 
-def peak_epoch(epochs: list[EpochMetrics], field: str) -> tuple[int | None, float | None]:
+def peak_epoch(
+    epochs: list[EpochMetrics], field: str
+) -> tuple[int | None, float | None]:
     best_epoch: int | None = None
     best_value: float | None = None
     for epoch_metrics in epochs:
@@ -133,9 +144,26 @@ def plot_log(parsed: ParsedLog, output_path: Path, dpi: int) -> None:
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
 
     if val_x:
-        ax.plot(val_x, val_y, label="Val AP", color="#2ca02c", linewidth=2.0, marker="o", markersize=3)
+        ax.plot(
+            val_x,
+            val_y,
+            label="Val AP",
+            color="#2ca02c",
+            linewidth=2.0,
+            marker="o",
+            markersize=3,
+        )
     if test_x:
-        ax.plot(test_x, test_y, label="Test AP", color="#ff7f0e", linewidth=1.8, marker="s", markersize=3, alpha=0.9)
+        ax.plot(
+            test_x,
+            test_y,
+            label="Test AP",
+            color="#ff7f0e",
+            linewidth=1.8,
+            marker="s",
+            markersize=3,
+            alpha=0.9,
+        )
     elif parsed.best_test_ap is not None:
         ax.axhline(
             parsed.best_test_ap,
@@ -147,12 +175,21 @@ def plot_log(parsed: ParsedLog, output_path: Path, dpi: int) -> None:
         )
 
     if parsed.best_epoch is not None:
-        ax.axvline(parsed.best_epoch, color="#444444", linestyle="--", linewidth=1.0, alpha=0.8, label=f"Best epoch {parsed.best_epoch}")
+        ax.axvline(
+            parsed.best_epoch,
+            color="#444444",
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.8,
+            label=f"Best epoch {parsed.best_epoch}",
+        )
 
     if peak_val_epoch is not None and peak_val_ap is not None:
         ax.scatter([peak_val_epoch], [peak_val_ap], color="#2ca02c", s=30, zorder=3)
     if parsed.best_epoch is not None and parsed.best_test_ap is not None:
-        ax.scatter([parsed.best_epoch], [parsed.best_test_ap], color="#ff7f0e", s=35, zorder=3)
+        ax.scatter(
+            [parsed.best_epoch], [parsed.best_test_ap], color="#ff7f0e", s=35, zorder=3
+        )
 
     ax.set_xlabel("Epoch")
     ax.set_ylabel("AP")
@@ -184,15 +221,28 @@ def plot_log(parsed: ParsedLog, output_path: Path, dpi: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot Val/Test AP curves for each seed log in a sweep directory.")
-    parser.add_argument("log_dir", type=Path, help="Directory containing seed_*.log files.")
-    parser.add_argument("--pattern", default="seed_*.log", help="Glob pattern used to find logs.")
-    parser.add_argument("--output_dir", type=Path, default=None, help="Directory for output PNG files. Defaults to <log_dir>/plots.")
+    parser = argparse.ArgumentParser(
+        description="Plot Val/Test AP curves for each seed log in a sweep directory."
+    )
+    parser.add_argument(
+        "log_dir", type=Path, help="Directory containing seed_*.log files."
+    )
+    parser.add_argument(
+        "--pattern", default="seed_*.log", help="Glob pattern used to find logs."
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=Path,
+        default=None,
+        help="Directory for output PNG files. Defaults to <log_dir>/plots.",
+    )
     parser.add_argument("--dpi", type=int, default=180, help="Figure DPI.")
     args = parser.parse_args()
 
     log_dir = args.log_dir.resolve()
-    output_dir = args.output_dir.resolve() if args.output_dir is not None else log_dir / "plots"
+    output_dir = (
+        args.output_dir.resolve() if args.output_dir is not None else log_dir / "plots"
+    )
 
     if not log_dir.exists():
         raise SystemExit(f"log_dir does not exist: {log_dir}")

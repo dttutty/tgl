@@ -16,6 +16,7 @@ class GeneralModel(torch.nn.Module):
             gnn_param['dim_out'] = memory_param['dim_out']
         self.gnn_param = gnn_param
         self.train_param = train_param
+        self.last_mail_peer_memory = None
         if memory_param['type'] == 'node':
             if memory_param['memory_update'] == 'gru':
                 self.memory_updater = GRUMemeoryUpdater(memory_param, 2 * memory_param['dim_out'] + dim_edge, memory_param['dim_out'], memory_param['dim_time'], dim_node)
@@ -75,6 +76,10 @@ class GeneralModel(torch.nn.Module):
         else:
             out = torch.stack(out, dim=0)
             out = self.combiner(out)[0][-1, :, :]
+        if self.gnn_param.get('mail_transform') == 'dyrep_attention':
+            self.last_mail_peer_memory = out.detach().clone()
+        else:
+            self.last_mail_peer_memory = None
         _ev_emb_e.record()
 
         _ev_pred_s.record()
@@ -106,6 +111,10 @@ class GeneralModel(torch.nn.Module):
         else:
             out = torch.stack(out, dim=0)
             out = self.combiner(out)[0][-1, :, :]
+        if self.gnn_param.get('mail_transform') == 'dyrep_attention':
+            self.last_mail_peer_memory = out.detach().clone()
+        else:
+            self.last_mail_peer_memory = None
         return out
 
 class NodeClassificationModel(torch.nn.Module):
