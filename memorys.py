@@ -113,10 +113,12 @@ class MailBox():
                 self.node_memory[nid.long()] = memory
                 self.node_memory_ts[nid.long()] = ts
 
-    def update_mailbox(self, nid, memory, root_nodes, ts, edge_feats, block, neg_samples=1):
+    def update_mailbox(self, nid, memory, root_nodes, ts, edge_feats, block, neg_samples=1, peer_memory=None):
         with torch.no_grad():
             num_true_edges = root_nodes.shape[0] // (neg_samples + 2)
             memory = memory.to(self.device)
+            if peer_memory is not None:
+                peer_memory = peer_memory.to(self.device)
             if edge_feats is not None:
                 edge_feats = edge_feats.to(self.device)
             if block is not None:
@@ -127,12 +129,33 @@ class MailBox():
                 dst = torch.from_numpy(root_nodes[num_true_edges:num_true_edges * 2]).to(self.device)
                 mem_src = memory[:num_true_edges]
                 mem_dst = memory[num_true_edges:num_true_edges * 2]
+                peer_memory = memory if peer_memory is None else peer_memory
+                if peer_memory.dim() != memory.dim():
+                    raise ValueError(
+                        'peer_memory must have the same rank as memory: got {}, need {}'.format(
+                            peer_memory.dim(), memory.dim()
+                        )
+                    )
+                if peer_memory.shape[0] < num_true_edges * 2:
+                    raise ValueError(
+                        'peer_memory must contain at least src+dst roots: got {}, need {}'.format(
+                            peer_memory.shape[0], num_true_edges * 2
+                        )
+                    )
+                if peer_memory.shape[1] != memory.shape[1]:
+                    raise ValueError(
+                        'peer_memory feature dim must match memory dim: got {}, need {}'.format(
+                            peer_memory.shape[1], memory.shape[1]
+                        )
+                    )
+                peer_src = peer_memory[:num_true_edges]
+                peer_dst = peer_memory[num_true_edges:num_true_edges * 2]
                 if self.dim_edge_feat > 0:
-                    src_mail = torch.cat([mem_src, mem_dst, edge_feats], dim=1)
-                    dst_mail = torch.cat([mem_dst, mem_src, edge_feats], dim=1)
+                    src_mail = torch.cat([mem_src, peer_dst, edge_feats], dim=1)
+                    dst_mail = torch.cat([mem_dst, peer_src, edge_feats], dim=1)
                 else:
-                    src_mail = torch.cat([mem_src, mem_dst], dim=1)
-                    dst_mail = torch.cat([mem_dst, mem_src], dim=1)
+                    src_mail = torch.cat([mem_src, peer_dst], dim=1)
+                    dst_mail = torch.cat([mem_dst, peer_src], dim=1)
                 mail = torch.cat([src_mail, dst_mail], dim=1).reshape(-1, src_mail.shape[1])
                 nid = torch.cat([src.unsqueeze(1), dst.unsqueeze(1)], dim=1).reshape(-1)
                 mail_ts = torch.from_numpy(ts[:num_true_edges * 2]).to(

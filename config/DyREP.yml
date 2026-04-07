@@ -1,6 +1,12 @@
 sampling:
-  - no_sample: True
+  - layer: 1
+    neighbor:
+      - 10
+    strategy: 'recent'
+    prop_time: False
     history: 1
+    duration: 0
+    num_thread: 32
 memory: 
   - type: 'node'
     dim_time: 128
@@ -11,9 +17,15 @@ memory:
     combine_node_feature: True
     dim_out: 128
 gnn:
-  - arch: 'identity'
+  - arch: 'transformer_attention'
+    layer: 1
+    att_head: 2
+    dim_time: 128
+    dim_out: 128
+    mail_transform: 'dyrep_attention'
 train:
   - epoch: 10
     batch_size: 2000
     lr: 0.0001
     dropout: 0.1
+    att_dropout: 0.1

@@ -314,6 +314,7 @@ def eval(mode="val"):
                     mem_edge_feats,
                     block,
                     neg_samples=neg_samples,
+                    peer_memory=getattr(model, "last_mail_peer_memory", None),
                 )
                 mailbox.update_memory(
                     model.memory_updater.last_updated_nid,
@@ -386,6 +387,7 @@ for e in range(train_param["epoch"]):
             task["ts"],
             task["mem_edge_feats"],
             task["block"],
+            peer_memory=task.get("peer_memory"),
         )
         mailbox.update_memory(
             task["nid"], task["memory"], task["root_nodes"], task["updated_ts"]
@@ -488,6 +490,9 @@ for e in range(train_param["epoch"]):
                     if mem_edge_feats is not None
                     else None,
                     "block": block,
+                    "peer_memory": model.last_mail_peer_memory.detach().clone()
+                    if getattr(model, "last_mail_peer_memory", None) is not None
+                    else None,
                 }
             )
 
