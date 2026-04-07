@@ -1,7 +1,9 @@
 import argparse
+import json
 import os
 import sys
 import time
+from dataclasses import dataclass, field
 
 start_time = time.time()
 
@@ -25,7 +27,36 @@ parser.add_argument(
 )  # if your dataset has no node features, set rnd_ndim > 0 to use random node features
 parser.add_argument('--tqdm', action='store_true', default=False, help='enable tqdm progress bars')
 parser.add_argument('--strict_avoid_rc', action='store_true', default=False, help='serialize memory/mailbox writes across ranks to avoid race conditions')
+parser.add_argument(
+    '--compile',
+    dest='compile_model',
+    action='store_true',
+    default=False,
+    help='Compile pure-compute submodules with torch.compile before DDP wrapping.',
+)
+parser.add_argument(
+    '--appendix-train-e2e',
+    action='store_true',
+    default=False,
+    help='Emit structured train-minibatch timing JSON for appendix benchmarking.',
+)
+parser.add_argument(
+    '--measure-start-epoch',
+    type=int,
+    default=1,
+    help='Zero-based epoch index where train-minibatch timing starts.',
+)
+parser.add_argument(
+    '--warmup-batches',
+    type=int,
+    default=20,
+    help='Additional train minibatches to skip after measure-start-epoch.',
+)
 args=parser.parse_args()
+if args.measure_start_epoch < 0:
+    raise ValueError('--measure-start-epoch must be >= 0')
+if args.warmup_batches < 0:
+    raise ValueError('--warmup-batches must be >= 0')
 
 
 def _launched_via_torchrun() -> bool:
@@ -116,6 +147,123 @@ from frost_data import (
     load_feat as load_frost_feat,
     load_graph as load_frost_graph,
 )
+
+
+@dataclass(slots=True)
+class AppendixTrainE2EBenchmark:
+    enabled: bool
+    system: str
+    rank: int
+    compile_enabled: bool
+    measure_start_epoch: int
+    warmup_batches: int
+    gpu_pairs: list[tuple[object, object]] = field(default_factory=list)
+    wall_ms: list[float] = field(default_factory=list)
+    train_batches_seen: int = 0
+    _last_ev: object | None = None
+    _last_wall_s: float | None = None
+
+    def reset_chain(self) -> None:
+        self._last_ev = None
+        self._last_wall_s = None
+
+    def on_train_batch_start(
+        self,
+        *,
+        epoch: int,
+        ev: object,
+        wall_time_s: float,
+    ) -> None:
+        if not self.enabled:
+            return
+        if epoch < self.measure_start_epoch:
+            self.reset_chain()
+            return
+        if self._last_ev is not None:
+            self.gpu_pairs.append((self._last_ev, ev))
+        if self._last_wall_s is not None:
+            self.wall_ms.append((wall_time_s - self._last_wall_s) * 1000.0)
+        self._last_ev = ev
+        self._last_wall_s = wall_time_s
+        self.train_batches_seen += 1
+
+    def emit_summary(self) -> None:
+        if not self.enabled:
+            return
+
+        torch.cuda.synchronize()
+        skipped_intervals = min(self.warmup_batches, len(self.wall_ms), len(self.gpu_pairs))
+        gpu_ms = [
+            ev_prev.elapsed_time(ev_curr)
+            for (ev_prev, ev_curr) in self.gpu_pairs[skipped_intervals:]
+        ]
+        wall_ms = self.wall_ms[skipped_intervals:]
+        payload: dict[str, int | float | bool | str] = {
+            "system": self.system,
+            "rank": self.rank,
+            "compile": self.compile_enabled,
+            "measure_start_epoch": self.measure_start_epoch,
+            "warmup_batches": self.warmup_batches,
+            "train_batches_seen": self.train_batches_seen,
+            "interval_count_raw": len(self.wall_ms),
+            "interval_count": len(wall_ms),
+            "skipped_intervals": skipped_intervals,
+        }
+        if wall_ms:
+            ordered_wall = sorted(wall_ms)
+            n = len(ordered_wall)
+            mean_wall = sum(ordered_wall) / n
+            var_wall = (
+                sum((value - mean_wall) ** 2 for value in ordered_wall) / n
+                if n > 1
+                else 0.0
+            )
+            payload.update(
+                {
+                    "avg_wall_ms": mean_wall,
+                    "std_wall_ms": var_wall**0.5,
+                    "p50_wall_ms": ordered_wall[int(0.50 * (n - 1))],
+                    "p90_wall_ms": ordered_wall[int(0.90 * (n - 1))],
+                    "p99_wall_ms": ordered_wall[int(0.99 * (n - 1))],
+                }
+            )
+        if gpu_ms:
+            ordered_gpu = sorted(gpu_ms)
+            n_gpu = len(ordered_gpu)
+            mean_gpu = sum(ordered_gpu) / n_gpu
+            var_gpu = (
+                sum((value - mean_gpu) ** 2 for value in ordered_gpu) / n_gpu
+                if n_gpu > 1
+                else 0.0
+            )
+            payload.update(
+                {
+                    "avg_gpu_ms": mean_gpu,
+                    "std_gpu_ms": var_gpu**0.5,
+                    "p50_gpu_ms": ordered_gpu[int(0.50 * (n_gpu - 1))],
+                    "p90_gpu_ms": ordered_gpu[int(0.90 * (n_gpu - 1))],
+                    "p99_gpu_ms": ordered_gpu[int(0.99 * (n_gpu - 1))],
+                }
+            )
+        print(f"APPENDIX_TRAIN_E2E_SUMMARY {json.dumps(payload, sort_keys=True)}")
+
+
+def compile_tgl_model_submodules(model: torch.nn.Module) -> list[str]:
+    compiled: list[str] = []
+    if hasattr(model, 'memory_updater'):
+        model.memory_updater = torch.compile(model.memory_updater)
+        compiled.append('memory_updater')
+    if hasattr(model, 'layers'):
+        for name, layer in list(model.layers.items()):
+            model.layers[name] = torch.compile(layer)
+            compiled.append(f'layers.{name}')
+    if hasattr(model, 'edge_predictor'):
+        model.edge_predictor = torch.compile(model.edge_predictor)
+        compiled.append('edge_predictor')
+    if hasattr(model, 'combiner'):
+        model.combiner = torch.compile(model.combiner)
+        compiled.append('combiner')
+    return compiled
 
 if args.seed is not None:
     set_seed(args.seed)
@@ -284,6 +432,13 @@ if args.local_rank < args.num_gpus:
     torch.cuda.set_device(0)
     # GPU worker process
     model = GeneralModel(dim_feats[1], dim_feats[4], sample_param, memory_param, gnn_param, train_param).cuda()
+    compiled_submodules = []
+    if args.compile_model:
+        compiled_submodules = compile_tgl_model_submodules(model)
+        print(
+            f"[Rank {args.local_rank}] torch.compile enabled for submodules: "
+            + ", ".join(compiled_submodules)
+        )
     
     def count_parameters(model: torch.nn.Module) -> tuple[int, int]:
         total = sum(p.numel() for p in model.parameters())
@@ -319,6 +474,14 @@ if args.local_rank < args.num_gpus:
     cur_step = 0
     target_profile_epoch = 1  # 第2个epoch (索引从0开始)
     profile_steps = 10        # 统计10个minibatch
+    appendix_bench = AppendixTrainE2EBenchmark(
+        enabled=args.appendix_train_e2e,
+        system='tgl',
+        rank=args.local_rank,
+        compile_enabled=args.compile_model,
+        measure_start_epoch=args.measure_start_epoch,
+        warmup_batches=args.warmup_batches,
+    )
     
     
     def trace_handler(p):
@@ -350,11 +513,17 @@ if args.local_rank < args.num_gpus:
 
         _last_train_ev = ev
         _last_train_wall = now_wall
+        appendix_bench.on_train_batch_start(
+            epoch=cur_epoch,
+            ev=ev,
+            wall_time_s=now_wall,
+        )
 
     def _reset_train_chain():
         global _last_train_ev, _last_train_wall
         _last_train_ev = None
         _last_train_wall = None
+        appendix_bench.reset_chain()
     while True:
         my_model_state = [None]
         model_state = [None] * (args.num_gpus + 1)
@@ -392,6 +561,7 @@ if args.local_rank < args.num_gpus:
 
                     print(f"[rank {args.local_rank}] minibatch start->start (wall): "
                           f"n={n} avg={avg*1000:.3f}ms p50={p50*1000:.3f}ms p90={p90*1000:.3f}ms p99={p99*1000:.3f}ms")
+            appendix_bench.emit_summary()
             # --------------------------------------
             break
         elif my_model_state[0] == 4:
