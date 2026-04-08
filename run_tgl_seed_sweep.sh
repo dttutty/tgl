@@ -7,7 +7,7 @@ cd "$SCRIPT_DIR"
 
 # 通用参数
 GPU_IDS="${GPU_IDS:-0,1}"
-MODEL="${MODEL:-dyrep}"
+MODEL="${MODEL:-apan}"
 STABLE_MODE="${STABLE_MODE:-true}"
 
 # 全局默认值
