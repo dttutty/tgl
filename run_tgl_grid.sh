@@ -111,63 +111,7 @@ PY
 
 summarize_run_dir() {
   local run_dir="$1"
-  local results_tsv="$2"
-  local summary_txt="$3"
-
-  uv run python - "$run_dir" "$results_tsv" "$summary_txt" <<'PY'
-import csv
-import pathlib
-import re
-import statistics
-import sys
-
-run_dir = pathlib.Path(sys.argv[1])
-results_tsv = pathlib.Path(sys.argv[2])
-summary_txt = pathlib.Path(sys.argv[3])
-
-pattern = re.compile(
-    r"^\s*test ap:([0-9.]+)\s+test auc:[0-9.]+",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-rows = []
-for log_path in sorted(
-    run_dir.glob("seed_*.log"),
-    key=lambda path: int(path.stem.split("_", 1)[1]),
-):
-    matches = pattern.findall(log_path.read_text(encoding="utf-8", errors="ignore"))
-    if not matches:
-        raise SystemExit(f"Could not parse final test ap from {log_path}")
-    seed = log_path.stem.split("_", 1)[1]
-    rows.append(
-        {
-            "seed": seed,
-            "test_ap": matches[-1],
-            "log_path": str(log_path),
-        }
-    )
-
-if not rows:
-    raise SystemExit(f"No seed logs found in {run_dir}")
-
-results_tsv.parent.mkdir(parents=True, exist_ok=True)
-with results_tsv.open("w", newline="", encoding="utf-8") as f:
-    writer = csv.DictWriter(
-        f, fieldnames=["seed", "test_ap", "log_path"], delimiter="\t"
-    )
-    writer.writeheader()
-    writer.writerows(rows)
-
-values = [float(row["test_ap"]) for row in rows]
-mean = sum(values) / len(values)
-stdev = statistics.pstdev(values) if len(values) > 1 else 0.0
-summary_lines = [
-    f"mean_test_ap={mean:.6f}",
-    f"std_test_ap={stdev:.6f}",
-]
-summary_txt.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
-print("\n".join(summary_lines))
-PY
+  uv run python "$SCRIPT_DIR/scripts/summarize_seed_sweep.py" "$run_dir"
 }
 
 EMIT_JOBS=0
@@ -386,6 +330,7 @@ summarize_all() {
   local dataset
   local run_dir
   local results_tsv
+  local summary_tsv
   local summary_txt
   local missing=0
 
@@ -393,6 +338,7 @@ summarize_all() {
     for dataset in "${DATASETS[@]}"; do
       run_dir="$(run_dir_for "$model" "$dataset")"
       results_tsv="$run_dir/results.tsv"
+      summary_tsv="$run_dir/summary.tsv"
       summary_txt="$run_dir/summary.txt"
       if [[ ! -d "$run_dir" ]]; then
         echo "Skipping missing run dir: $run_dir"
@@ -409,6 +355,7 @@ summarize_all() {
       echo "=== Summarizing TGL ${model^^} ${dataset} ==="
       summarize_run_dir "$run_dir" "$results_tsv" "$summary_txt"
       echo "Results TSV: $results_tsv"
+      echo "Summary TSV: $summary_tsv"
       echo "Summary: $summary_txt"
     done
   done

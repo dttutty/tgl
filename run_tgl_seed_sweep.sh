@@ -70,6 +70,7 @@ RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_${MODEL,,}_${DATASET,,}_2gpu_${S
 mkdir -p "$RUN_DIR"
 
 RESULTS_TSV="$RUN_DIR/results.tsv"
+SUMMARY_TSV="$RUN_DIR/summary.tsv"
 SUMMARY_TXT="$RUN_DIR/summary.txt"
 TMP_CONFIG="$(mktemp "$RUN_DIR/${MODEL^^}_XXXXXX.yml")"
 
@@ -97,24 +98,6 @@ matches = re.findall(r"^\s*test ap:([0-9.]+)\s+test auc:[0-9.]+", text, re.IGNOR
 if not matches:
     raise SystemExit(f"Could not parse final test ap from {sys.argv[1]}")
 print(matches[-1])
-PY
-}
-
-mean_test_ap() {
-  local results_tsv="$1"
-  uv run python - "$results_tsv" <<'PY'
-import csv
-import statistics
-import sys
-
-with open(sys.argv[1], newline="", encoding="utf-8") as f:
-    rows = list(csv.DictReader(f, delimiter="\t"))
-
-values = [float(row["test_ap"]) for row in rows]
-mean = sum(values) / len(values)
-stdev = statistics.pstdev(values) if len(values) > 1 else 0.0
-print(f"mean_test_ap={mean:.6f}")
-print(f"std_test_ap={stdev:.6f}")
 PY
 }
 
@@ -153,6 +136,7 @@ for seed in "${SEEDS[@]}"; do
   echo "[TGL ${MODEL^^} 2GPU] seed=${seed} final_test_ap=${test_ap}"
 done
 
-mean_test_ap "$RESULTS_TSV" | tee "$SUMMARY_TXT"
+uv run python "$SCRIPT_DIR/scripts/summarize_seed_sweep.py" "$RUN_DIR"
 echo "Results TSV: $RESULTS_TSV"
+echo "Summary TSV: $SUMMARY_TSV"
 echo "Summary: $SUMMARY_TXT"
