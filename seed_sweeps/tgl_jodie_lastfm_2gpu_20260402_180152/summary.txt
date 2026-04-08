@@ -1,2 +1,0 @@
-mean_test_ap=0.700779
-std_test_ap=0.014153
