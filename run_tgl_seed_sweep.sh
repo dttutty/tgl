@@ -11,7 +11,7 @@ MODEL="${MODEL:-apan}"
 STABLE_MODE="${STABLE_MODE:-true}"
 
 # 全局默认值
-DATASET="${DATASET:-MOOC}"
+DATASET="${DATASET:-LASTFM}"
 EPOCHS="${EPOCHS:-100}"
 
 # 模型特定配置
