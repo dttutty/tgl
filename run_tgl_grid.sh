@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
 SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$SCRIPT_SOURCE")"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 PAIR_RUNNER="$REPO_ROOT/scripts/run_on_gpu_pairs.py"
+DATASET_DEFAULTS_SH="$REPO_ROOT/DATA/dataset_defaults.sh"
+source "$DATASET_DEFAULTS_SH"
 usage() {
   cat <<'EOF'
 Usage:
@@ -22,7 +24,7 @@ Environment overrides:
   MODELS="tgn dyrep jodie apan"
   DATASETS="LASTFM MOOC REDDIT WIKIPEDIA"
   SEEDS="0 1 2 3 4"
-  MACRO_BATCH_SIZE=600
+  MACRO_BATCH_SIZE=<override dataset default>
   EPOCHS=100
   STABLE_MODE=true
   RUN_ROOT=/abs/path/to/third_party/tgl/seed_sweeps
@@ -215,10 +217,10 @@ cd "$SCRIPT_DIR"
 
 GPU_IDS_DEFAULT="${CUDA_VISIBLE_DEVICES:-0,1}"
 GPU_IDS="${CLI_GPU_IDS:-${GPU_IDS:-$GPU_IDS_DEFAULT}}"
-IFS=' ' read -r -a MODELS <<< "${MODELS:-tgn dyrep jodie apan}"
+IFS=' ' read -r -a MODELS <<< "${MODELS:-apan}"
 IFS=' ' read -r -a DATASETS <<< "${DATASETS:-LASTFM MOOC REDDIT WIKIPEDIA}"
 IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
-MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-600}"
+MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-}"
 EPOCHS="${EPOCHS:-100}"
 STABLE_MODE="${STABLE_MODE:-true}"
 RUN_ROOT="${RUN_ROOT:-$SCRIPT_DIR/seed_sweeps}"
@@ -241,7 +243,19 @@ fi
 run_dir_for() {
   local model="$1"
   local dataset="$2"
-  printf '%s\n' "$RUN_ROOT/tgl_${model,,}_${dataset,,}_bs${MACRO_BATCH_SIZE}"
+  local macro_batch_size
+
+  macro_batch_size="$(macro_batch_size_for "$dataset")"
+  printf '%s\n' "$RUN_ROOT/tgl_${model,,}_${dataset,,}_bs${macro_batch_size}"
+}
+
+macro_batch_size_for() {
+  local dataset="$1"
+  if [[ -n "$MACRO_BATCH_SIZE" ]]; then
+    printf '%s\n' "$MACRO_BATCH_SIZE"
+  else
+    default_macro_batch_size "$dataset"
+  fi
 }
 
 run_single_seed() {
@@ -253,6 +267,7 @@ run_single_seed() {
   local log_path=""
   local tmp_config=""
   local n_gpu=""
+  local macro_batch_size=""
   local batch_size=""
   local test_ap=""
   local -a applied_stable_env=()
@@ -272,11 +287,12 @@ run_single_seed() {
     echo "Each TGL job expects exactly 2 GPUs, got GPU_IDS=${GPU_IDS}" >&2
     exit 1
   fi
-  if (( MACRO_BATCH_SIZE % n_gpu != 0 )); then
-    echo "MACRO_BATCH_SIZE (${MACRO_BATCH_SIZE}) must be divisible by n_gpu (${n_gpu})." >&2
+  macro_batch_size="$(macro_batch_size_for "$dataset")"
+  if (( macro_batch_size % n_gpu != 0 )); then
+    echo "MACRO_BATCH_SIZE (${macro_batch_size}) must be divisible by n_gpu (${n_gpu})." >&2
     exit 1
   fi
-  batch_size=$((MACRO_BATCH_SIZE / n_gpu))
+  batch_size=$((macro_batch_size / n_gpu))
 
   config_file="$(resolve_config_file "$model")"
   log_path="$run_dir/seed_${seed}.log"
@@ -303,7 +319,7 @@ run_single_seed() {
   echo
   echo "=== [TGL ${model^^} 2GPU] dataset=${dataset} seed=${seed} gpus=${GPU_IDS} ==="
   echo "Epochs: ${EPOCHS}"
-  echo "Macro batch size: ${MACRO_BATCH_SIZE} (${batch_size} per GPU)"
+  echo "Macro batch size: ${macro_batch_size} (${batch_size} per GPU)"
   echo "Stable mode: ${STABLE_MODE_ARG}"
   if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
     echo "Stable mode env overrides: ${applied_stable_env[*]}"
@@ -429,7 +445,11 @@ run_scheduler() {
   echo "Models: ${MODELS[*]}"
   echo "Datasets: ${DATASETS[*]}"
   echo "Seeds: ${SEEDS[*]}"
-  echo "Macro batch size: ${MACRO_BATCH_SIZE}"
+  if [[ -n "$MACRO_BATCH_SIZE" ]]; then
+    echo "Macro batch size: ${MACRO_BATCH_SIZE}"
+  else
+    echo "Macro batch size: dataset defaults from ${DATASET_DEFAULTS_SH}"
+  fi
   echo "Epochs: ${EPOCHS}"
   echo "Stable mode: ${STABLE_MODE_ARG}"
   echo "Run root: ${RUN_ROOT}"
