@@ -13,7 +13,7 @@ TRAIN_SCRIPT="${TRAIN_SCRIPT:-train_dist.py}"
 STALE_MACRO_BATCHES="${STALE_MACRO_BATCHES:-}"
 
 # 全局默认值
-DATASET="${DATASET:-LASTFM}"
+DATASET="${DATASET:-reddit}"
 EPOCHS="${EPOCHS:-100}"
 
 # 模型特定配置
@@ -39,7 +39,7 @@ esac
 IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
 
 REPO_ROOT="${SCRIPT_DIR}/../.."
-source "${REPO_ROOT}/DATA/dataset_defaults.sh"
+source "${REPO_ROOT}/DATA/dataset_defaults_for_memory_based.sh"
 
 N_GPU="$(tr ',' '\n' <<< "${GPU_IDS}" | grep -c .)"
 MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-$(default_macro_batch_size "${DATASET}")}"
