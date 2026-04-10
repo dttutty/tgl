@@ -7,8 +7,10 @@ cd "$SCRIPT_DIR"
 
 # 通用参数
 GPU_IDS="${GPU_IDS:-0,1}"
-MODEL="${MODEL:-apan}"
+MODEL="${MODEL:-tgn}"
 STABLE_MODE="${STABLE_MODE:-true}"
+TRAIN_SCRIPT="${TRAIN_SCRIPT:-train_dist.py}"
+STALE_MACRO_BATCHES="${STALE_MACRO_BATCHES:-}"
 
 # 全局默认值
 DATASET="${DATASET:-LASTFM}"
@@ -43,6 +45,26 @@ N_GPU="$(tr ',' '\n' <<< "${GPU_IDS}" | grep -c .)"
 MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-$(default_macro_batch_size "${DATASET}")}"
 BATCH_SIZE="${BATCH_SIZE:-$(( MACRO_BATCH_SIZE / N_GPU ))}"
 
+if [[ ! -f "$SCRIPT_DIR/$TRAIN_SCRIPT" ]]; then
+  echo "Training script not found: $SCRIPT_DIR/$TRAIN_SCRIPT" >&2
+  exit 1
+fi
+
+EXTRA_TRAIN_ARGS=()
+RUN_DIR_SUFFIX=""
+if [[ "${TRAIN_SCRIPT##*/}" == "train_dist_more_stale.py" || -n "${STALE_MACRO_BATCHES}" ]]; then
+  STALE_MACRO_BATCHES="${STALE_MACRO_BATCHES:-2}"
+  case "${STALE_MACRO_BATCHES}" in
+    1|2|3) ;;
+    *)
+      echo "Invalid STALE_MACRO_BATCHES=${STALE_MACRO_BATCHES}. Use 1, 2, or 3." >&2
+      exit 1
+      ;;
+  esac
+  EXTRA_TRAIN_ARGS+=(--stale_macro_batches "${STALE_MACRO_BATCHES}")
+  RUN_DIR_SUFFIX="_stale${STALE_MACRO_BATCHES}"
+fi
+
 case "${STABLE_MODE,,}" in
   1|true|yes|on) STABLE_MODE_ARG=true ;;
   0|false|no|off) STABLE_MODE_ARG=false ;;
@@ -66,7 +88,7 @@ if [[ "$STABLE_MODE_ARG" == "true" ]]; then
 fi
 
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
-RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_${MODEL,,}_${DATASET,,}_2gpu_${STAMP}}"
+RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_${MODEL,,}_${DATASET,,}_2gpu${RUN_DIR_SUFFIX}_${STAMP}}"
 mkdir -p "$RUN_DIR"
 
 RESULTS_TSV="$RUN_DIR/results.tsv"
@@ -105,6 +127,10 @@ echo "Running TGL ${MODEL^^} seed sweep on GPUs ${GPU_IDS}"
 echo "Dataset: ${DATASET}"
 echo "Epochs: ${EPOCHS}"
 echo "Macro batch size: ${MACRO_BATCH_SIZE} (${BATCH_SIZE} per GPU)"
+echo "Train script: ${TRAIN_SCRIPT}"
+if [[ ${#EXTRA_TRAIN_ARGS[@]} -gt 0 ]]; then
+  echo "Extra train args: ${EXTRA_TRAIN_ARGS[*]}"
+fi
 echo "Stable mode: ${STABLE_MODE_ARG}"
 if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
   echo "Stable mode env overrides: ${applied_stable_env[*]}"
@@ -118,13 +144,14 @@ for seed in "${SEEDS[@]}"; do
   echo
   echo "=== [TGL ${MODEL^^} 2GPU] seed=${seed} ==="
   if ! CUDA_VISIBLE_DEVICES="${GPU_IDS}" \
-    uv run python train_dist.py \
+    uv run python "${TRAIN_SCRIPT}" \
       --dataset "${DATASET}" \
       --config "$TMP_CONFIG" \
       --num_gpus "${N_GPU}" \
       --seed "${seed}" \
       --rnd_edim 0 \
       --rnd_ndim 0 \
+      "${EXTRA_TRAIN_ARGS[@]}" \
       --tqdm \
       2>&1 | tee "$log_path"; then
     echo "Run failed for seed=${seed}. See ${log_path}" >&2
