@@ -7,13 +7,13 @@ cd "$SCRIPT_DIR"
 
 # 通用参数
 GPU_IDS="${GPU_IDS:-0,1}"
-MODEL="${MODEL:-tgn}"
+MODEL="${MODEL:-apan}"
 STABLE_MODE="${STABLE_MODE:-true}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-train_dist.py}"
 STALE_MACRO_BATCHES="${STALE_MACRO_BATCHES:-}"
 
 # 全局默认值
-DATASET="${DATASET:-reddit}"
+DATASET="${DATASET:-lastfm}"
 EPOCHS="${EPOCHS:-100}"
 
 # 模型特定配置
