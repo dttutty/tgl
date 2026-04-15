@@ -142,12 +142,18 @@ def format_lr_scheduler_step(step_result):
 def load_feat(d, rand_de, rand_dn):
     node_feats = None
     if os.path.exists('DATA/{}/node_features.pt'.format(d)):
-        node_feats = torch.load('DATA/{}/node_features.pt'.format(d))
+        node_feats = torch.load(
+            'DATA/{}/node_features.pt'.format(d),
+            map_location='cpu',
+        )
         if node_feats.dtype == torch.bool:
             node_feats = node_feats.type(torch.float32)
     edge_feats = None
     if os.path.exists('DATA/{}/edge_features.pt'.format(d)):
-        edge_feats = torch.load('DATA/{}/edge_features.pt'.format(d))
+        edge_feats = torch.load(
+            'DATA/{}/edge_features.pt'.format(d),
+            map_location='cpu',
+        )
         if edge_feats.dtype == torch.bool:
             edge_feats = edge_feats.type(torch.float32)
     if rand_de > 0:

@@ -3,112 +3,133 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
-# 通用参数
+cd "${REPO_ROOT}"
+
 GPU_IDS="${GPU_IDS:-0,1}"
-MODEL="${MODEL:-apan}"
-STABLE_MODE="${STABLE_MODE:-true}"
-TRAIN_SCRIPT="${TRAIN_SCRIPT:-train_dist.py}"
-STALE_MACRO_BATCHES="${STALE_MACRO_BATCHES:-}"
+MODELS_RAW="${MODELS:-apan tgn}"
+DATASETS_RAW="${DATASETS:-LASTFM MOOC REDDIT WIKIPEDIA}"
+SEEDS_RAW="${SEEDS:-0}"
+BATCH_SIZES_RAW="${BATCH_SIZES:-600 1200 2000 4000}"
 
-# 全局默认值
-DATASET="${DATASET:-lastfm}"
-EPOCHS="${EPOCHS:-100}"
+WARMUP_BATCHES="${WARMUP_BATCHES:-5}"
+MEASURE_BATCHES="${MEASURE_BATCHES:-100}"
+REQUIRE_FULL_MEASURE="${REQUIRE_FULL_MEASURE:-1}"
+MAX_TRAIN_STEPS_OVERRIDE="${MAX_TRAIN_STEPS:-}"
+OMP_THREADS="${OMP_NUM_THREADS:-8}"
+MKL_THREADS="${MKL_NUM_THREADS:-8}"
 
-# 模型特定配置
-case "${MODEL,,}" in
-  apan)
-    CONFIG_FILE="config/APAN.yml"
-    ;;
-  jodie)
-    CONFIG_FILE="config/JODIE.yml"
-    ;;
-  tgn)
-    CONFIG_FILE="config/TGN.yml"
-    ;;
-  dyrep)
-    CONFIG_FILE="config/DyREP.yml"
-    ;;
-  *)
-    echo "Unknown model: ${MODEL}. Supported models: apan, jodie, tgn, dyrep" >&2
-    exit 1
-    ;;
-esac
+FROST_EPOCHS="${FROST_EPOCHS:-1}"
+if [[ -n "${TGL_EPOCHS:-}" ]]; then
+  TGL_EPOCHS="${TGL_EPOCHS}"
+else
+  TGL_EPOCHS=1000
+fi
 
-IFS=' ' read -r -a SEEDS <<< "${SEEDS:-0 1 2 3 4}"
-
-REPO_ROOT="${SCRIPT_DIR}/../.."
-source "${REPO_ROOT}/DATA/dataset_defaults_for_memory_based.sh"
-
-N_GPU="$(tr ',' '\n' <<< "${GPU_IDS}" | grep -c .)"
-MACRO_BATCH_SIZE="${MACRO_BATCH_SIZE:-$(default_macro_batch_size "${DATASET}")}"
-BATCH_SIZE="${BATCH_SIZE:-$(( MACRO_BATCH_SIZE / N_GPU ))}"
-
-if [[ ! -f "$SCRIPT_DIR/$TRAIN_SCRIPT" ]]; then
-  echo "Training script not found: $SCRIPT_DIR/$TRAIN_SCRIPT" >&2
+if (( WARMUP_BATCHES < 0 )); then
+  echo "WARMUP_BATCHES must be >= 0, got ${WARMUP_BATCHES}" >&2
+  exit 1
+fi
+if (( MEASURE_BATCHES < 1 )); then
+  echo "MEASURE_BATCHES must be >= 1, got ${MEASURE_BATCHES}" >&2
+  exit 1
+fi
+if [[ -n "${MAX_TRAIN_STEPS_OVERRIDE}" ]] && (( MAX_TRAIN_STEPS_OVERRIDE < 0 )); then
+  echo "MAX_TRAIN_STEPS must be >= 0, got ${MAX_TRAIN_STEPS_OVERRIDE}" >&2
   exit 1
 fi
 
-EXTRA_TRAIN_ARGS=()
-RUN_DIR_SUFFIX=""
-if [[ "${TRAIN_SCRIPT##*/}" == "train_dist_more_stale.py" || -n "${STALE_MACRO_BATCHES}" ]]; then
-  STALE_MACRO_BATCHES="${STALE_MACRO_BATCHES:-2}"
-  case "${STALE_MACRO_BATCHES}" in
-    1|2|3) ;;
-    *)
-      echo "Invalid STALE_MACRO_BATCHES=${STALE_MACRO_BATCHES}. Use 1, 2, or 3." >&2
-      exit 1
-      ;;
-  esac
-  EXTRA_TRAIN_ARGS+=(--stale_macro_batches "${STALE_MACRO_BATCHES}")
-  RUN_DIR_SUFFIX="_stale${STALE_MACRO_BATCHES}"
+IFS=',' read -r -a GPU_LIST <<< "${GPU_IDS}"
+N_GPU="${#GPU_LIST[@]}"
+if (( N_GPU < 1 )); then
+  echo "No valid GPU ids in GPU_IDS=${GPU_IDS}" >&2
+  exit 1
+fi
+if (( N_GPU != 2 )); then
+  echo "Warning: expected 2 GPUs for this benchmark, but got ${N_GPU} from GPU_IDS=${GPU_IDS}" >&2
 fi
 
-case "${STABLE_MODE,,}" in
-  1|true|yes|on) STABLE_MODE_ARG=true ;;
-  0|false|no|off) STABLE_MODE_ARG=false ;;
-  *)
-    echo "Invalid STABLE_MODE=${STABLE_MODE}. Use true/false." >&2
-    exit 1
-    ;;
-esac
-
-applied_stable_env=()
-if [[ "$STABLE_MODE_ARG" == "true" ]]; then
-  if [[ -z "${CUDA_DEVICE_MAX_CONNECTIONS+x}" ]]; then
-    export CUDA_DEVICE_MAX_CONNECTIONS=1
-    applied_stable_env+=("CUDA_DEVICE_MAX_CONNECTIONS=1")
-  fi
-  if [[ -z "${CUBLAS_WORKSPACE_CONFIG+x}" ]]; then
-    export CUBLAS_WORKSPACE_CONFIG=:4096:8
-    applied_stable_env+=("CUBLAS_WORKSPACE_CONFIG=:4096:8")
-  fi
-  export FROST_STABLE_MODE=1
-fi
+MODELS_NORM="${MODELS_RAW//,/ }"
+DATASETS_NORM="${DATASETS_RAW//,/ }"
+SEEDS_NORM="${SEEDS_RAW//,/ }"
+BATCH_SIZES_NORM="${BATCH_SIZES_RAW//,/ }"
+IFS=' ' read -r -a MODELS <<< "${MODELS_NORM}"
+IFS=' ' read -r -a DATASETS <<< "${DATASETS_NORM}"
+IFS=' ' read -r -a SEEDS <<< "${SEEDS_NORM}"
+IFS=' ' read -r -a BATCH_SIZES <<< "${BATCH_SIZES_NORM}"
 
 STAMP="$(date -u +%Y%m%d_%H%M%S)"
-RUN_DIR="${RUN_DIR:-$SCRIPT_DIR/seed_sweeps/tgl_${MODEL,,}_${DATASET,,}_2gpu${RUN_DIR_SUFFIX}_${STAMP}}"
-mkdir -p "$RUN_DIR"
+RUN_DIR="${RUN_DIR:-${REPO_ROOT}/experiments/com_throughput_with_tgl/throughput_2gpu_${STAMP}}"
+LOG_DIR="${RUN_DIR}/logs"
+CFG_DIR="${RUN_DIR}/configs"
+mkdir -p "${LOG_DIR}" "${CFG_DIR}"
 
-RESULTS_TSV="$RUN_DIR/results.tsv"
-SUMMARY_TSV="$RUN_DIR/summary.tsv"
-SUMMARY_TXT="$RUN_DIR/summary.txt"
-TMP_CONFIG="$(mktemp "$RUN_DIR/${MODEL^^}_XXXXXX.yml")"
+RESULTS_TSV="${RUN_DIR}/results.tsv"
+SUMMARY_TSV="${RUN_DIR}/summary.tsv"
+SUMMARY_TXT="${RUN_DIR}/summary.txt"
 
-cleanup() {
-  rm -f "$TMP_CONFIG"
+if [[ -z "${CUDA_DEVICE_MAX_CONNECTIONS+x}" ]]; then
+  export CUDA_DEVICE_MAX_CONNECTIONS=1
+fi
+if [[ -z "${CUBLAS_WORKSPACE_CONFIG+x}" ]]; then
+  export CUBLAS_WORKSPACE_CONFIG=:4096:8
+fi
+export FROST_STABLE_MODE=1
+
+tgl_config_for_model() {
+  local model="${1,,}"
+  case "${model}" in
+    tgn) echo "${SCRIPT_DIR}/config/TGN.yml" ;;
+    jodie) echo "${SCRIPT_DIR}/config/JODIE.yml" ;;
+    apan) echo "${SCRIPT_DIR}/config/APAN.yml" ;;
+    *)
+      echo "Unsupported model=${1}. Supported: tgn, jodie, apan" >&2
+      return 1
+      ;;
+  esac
 }
-trap cleanup EXIT
 
-sed \
-  -e "0,/epoch: 10/s//epoch: ${EPOCHS}/" \
-  -e "s/batch_size: [0-9]*/batch_size: ${BATCH_SIZE}/" \
-  "${CONFIG_FILE}" > "$TMP_CONFIG"
+compute_tgl_max_train_steps() {
+  local dataset="$1"
+  local per_gpu_batch_size="$2"
+  local n_gpu="$3"
+  local warmup="$4"
+  local target="$5"
+  uv run python - "$dataset" "$per_gpu_batch_size" "$n_gpu" "$warmup" "$target" <<'PY'
+import math
+from pathlib import Path
+import sys
 
-printf "seed\ttest_ap\tlog_path\n" > "$RESULTS_TSV"
+import pandas as pd
 
-parse_test_ap() {
+dataset = sys.argv[1].upper()
+per_gpu_batch_size = int(sys.argv[2])
+n_gpu = int(sys.argv[3])
+warmup = int(sys.argv[4])
+target = int(sys.argv[5])
+
+df = pd.read_csv(Path("DATA") / dataset / "edges.csv")
+train_edge_end = int(df[df["default_split"].gt(0)].index[0])
+steps_per_epoch = math.ceil(train_edge_end / (per_gpu_batch_size * n_gpu))
+required_intervals = warmup + target
+
+steps = 1
+while True:
+    full_epochs, partial_steps = divmod(steps, steps_per_epoch)
+    intervals = full_epochs * max(steps_per_epoch - 1, 0)
+    if partial_steps > 0:
+        intervals += max(partial_steps - 1, 0)
+    if intervals >= required_intervals:
+        # train_dist.py can end up one train-batch short in its final
+        # appendix accounting, so keep a tiny safety margin here.
+        print(steps + 2)
+        raise SystemExit(0)
+    steps += 1
+PY
+}
+
+parse_frost_events_per_sec_per_gpu() {
   local log_path="$1"
   uv run python - "$log_path" <<'PY'
 import pathlib
@@ -116,54 +137,272 @@ import re
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore")
-matches = re.findall(r"^\s*test ap:([0-9.]+)\s+test auc:[0-9.]+", text, re.IGNORECASE | re.MULTILINE)
+matches = re.findall(
+    r"TRAIN_THROUGHPUT_PER_GPU\s+rank=(\d+)\s+events_per_sec_per_gpu=([0-9eE+\-.]+).*?measured_batches=([0-9]+)",
+    text,
+)
 if not matches:
-    raise SystemExit(f"Could not parse final test ap from {sys.argv[1]}")
-print(matches[-1])
+    raise SystemExit(f"Could not parse FROST throughput from {sys.argv[1]}")
+by_rank = {}
+for rank_s, eps_s, measured_s in matches:
+    by_rank[int(rank_s)] = (float(eps_s), int(measured_s))
+eps_values = [value[0] for value in by_rank.values()]
+measured_values = [value[1] for value in by_rank.values()]
+print(f"{min(eps_values):.6f}\t{min(measured_values)}")
 PY
 }
 
-echo "Running TGL ${MODEL^^} seed sweep on GPUs ${GPU_IDS}"
-echo "Dataset: ${DATASET}"
-echo "Epochs: ${EPOCHS}"
-echo "Macro batch size: ${MACRO_BATCH_SIZE} (${BATCH_SIZE} per GPU)"
-echo "Train script: ${TRAIN_SCRIPT}"
-if [[ ${#EXTRA_TRAIN_ARGS[@]} -gt 0 ]]; then
-  echo "Extra train args: ${EXTRA_TRAIN_ARGS[*]}"
-fi
-echo "Stable mode: ${STABLE_MODE_ARG}"
-if [[ ${#applied_stable_env[@]} -gt 0 ]]; then
-  echo "Stable mode env overrides: ${applied_stable_env[*]}"
-fi
+parse_tgl_events_per_sec_per_gpu() {
+  local log_path="$1"
+  uv run python - "$log_path" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore")
+rows = []
+decoder = json.JSONDecoder()
+for match in re.finditer(r"APPENDIX_TRAIN_E2E_SUMMARY\s+", text):
+    start = match.end()
+    try:
+        obj, _ = decoder.raw_decode(text[start:])
+    except json.JSONDecodeError:
+        continue
+    v = obj.get("events_per_sec_per_gpu")
+    if not isinstance(v, (int, float)):
+        continue
+    rank = obj.get("rank")
+    interval_count = obj.get("interval_count")
+    rank_key = int(rank) if isinstance(rank, int) else len(rows)
+    rows.append((rank_key, float(v), int(interval_count) if isinstance(interval_count, int) else -1))
+if not rows:
+    raise SystemExit(f"Could not parse TGL throughput from {sys.argv[1]}")
+by_rank = {}
+for rank_key, eps, interval_count in rows:
+    by_rank[rank_key] = (eps, interval_count)
+eps_values = [value[0] for value in by_rank.values()]
+interval_values = [value[1] for value in by_rank.values() if value[1] >= 0]
+min_interval = min(interval_values) if interval_values else -1
+print(f"{min(eps_values):.6f}\t{min_interval}")
+PY
+}
+
+write_tgl_config() {
+  local src_cfg="$1"
+  local dst_cfg="$2"
+  local epoch="$3"
+  local batch_size="$4"
+  sed -E \
+    -e "0,/epoch:[[:space:]]*[0-9]+/s//epoch: ${epoch}/" \
+    -e "0,/batch_size:[[:space:]]*[0-9]+/s//batch_size: ${batch_size}/" \
+    "${src_cfg}" > "${dst_cfg}"
+}
+
+printf "model\tdataset\tseed\tn_gpu\tmacro_batch_size\tper_gpu_batch_size\tfrost_events_per_sec_per_gpu\ttgl_events_per_sec_per_gpu\tspeedup_frost_over_tgl\tfrost_measured_batches\ttgl_measured_batches\tfrost_log\ttgl_log\n" > "${RESULTS_TSV}"
+
+echo "=== Throughput Benchmark (FROST vs TGL) ==="
+echo "Run dir: ${RUN_DIR}"
+echo "GPU_IDS: ${GPU_IDS} (n_gpu=${N_GPU})"
+echo "Models: ${MODELS[*]}"
+echo "Datasets: ${DATASETS[*]}"
 echo "Seeds: ${SEEDS[*]}"
-echo "Temp config: ${TMP_CONFIG}"
-echo "Run directory: ${RUN_DIR}"
+echo "Macro batch sizes: ${BATCH_SIZES[*]}"
+echo "Stable mode env: CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS}, CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG}, FROST_STABLE_MODE=${FROST_STABLE_MODE}"
+echo "FROST: epoch=${FROST_EPOCHS} (uses built-in TRAIN_THROUGHPUT_PER_GPU line)"
+echo "TGL: epoch=${TGL_EPOCHS}, warmup_batches=${WARMUP_BATCHES}, measure_batches=${MEASURE_BATCHES}, max_train_steps=dynamic"
+echo "OMP_NUM_THREADS=${OMP_THREADS}, MKL_NUM_THREADS=${MKL_THREADS}"
+echo "Aggregation: bottleneck rank (min events/sec/gpu)"
+echo "Require full measurement window: ${REQUIRE_FULL_MEASURE}"
 
-for seed in "${SEEDS[@]}"; do
-  log_path="$RUN_DIR/seed_${seed}.log"
-  echo
-  echo "=== [TGL ${MODEL^^} 2GPU] seed=${seed} ==="
-  if ! CUDA_VISIBLE_DEVICES="${GPU_IDS}" \
-    uv run python "${TRAIN_SCRIPT}" \
-      --dataset "${DATASET}" \
-      --config "$TMP_CONFIG" \
-      --num_gpus "${N_GPU}" \
-      --seed "${seed}" \
-      --rnd_edim 0 \
-      --rnd_ndim 0 \
-      "${EXTRA_TRAIN_ARGS[@]}" \
-      --tqdm \
-      2>&1 | tee "$log_path"; then
-    echo "Run failed for seed=${seed}. See ${log_path}" >&2
-    exit 1
-  fi
+combo_idx=0
+for model in "${MODELS[@]}"; do
+  model_lc="${model,,}"
+  tgl_src_cfg="$(tgl_config_for_model "${model_lc}")"
 
-  test_ap="$(parse_test_ap "$log_path")"
-  printf "%s\t%s\t%s\n" "$seed" "$test_ap" "$log_path" >> "$RESULTS_TSV"
-  echo "[TGL ${MODEL^^} 2GPU] seed=${seed} final_test_ap=${test_ap}"
+  for dataset in "${DATASETS[@]}"; do
+    dataset_uc="${dataset^^}"
+    dataset_lc="${dataset,,}"
+    for macro_batch_size in "${BATCH_SIZES[@]}"; do
+      if (( macro_batch_size < 1 )); then
+        echo "Invalid macro_batch_size=${macro_batch_size}" >&2
+        exit 1
+      fi
+      if (( macro_batch_size % N_GPU != 0 )); then
+        echo "macro_batch_size=${macro_batch_size} is not divisible by n_gpu=${N_GPU}" >&2
+        exit 1
+      fi
+      per_gpu_batch_size="$(( macro_batch_size / N_GPU ))"
+      tgl_cfg="${CFG_DIR}/${model_lc}_${dataset_lc}_mb${macro_batch_size}.yml"
+      write_tgl_config "${tgl_src_cfg}" "${tgl_cfg}" "${TGL_EPOCHS}" "${per_gpu_batch_size}"
+
+      for seed in "${SEEDS[@]}"; do
+        combo_idx=$((combo_idx + 1))
+        frost_log="${LOG_DIR}/frost_${model_lc}_${dataset_lc}_mb${macro_batch_size}_seed${seed}.log"
+        tgl_log="${LOG_DIR}/tgl_${model_lc}_${dataset_lc}_mb${macro_batch_size}_seed${seed}.log"
+        master_port=$(( 32000 + combo_idx ))
+
+        echo
+        echo "=== ${model_lc^^} ${dataset_uc} mb=${macro_batch_size} seed=${seed} ==="
+        echo "macro_batch_size=${macro_batch_size}, per_gpu_batch_size=${per_gpu_batch_size}"
+
+        echo "[FROST] launching..."
+        if ! OMP_NUM_THREADS="${OMP_THREADS}" \
+          MKL_NUM_THREADS="${MKL_THREADS}" \
+          CUDA_VISIBLE_DEVICES="${GPU_IDS}" \
+          FROST_THROUGHPUT_WARMUP_BATCHES_PER_EPOCH="${WARMUP_BATCHES}" \
+          FROST_THROUGHPUT_MEASURE_BATCHES="${MEASURE_BATCHES}" \
+          uv run python "${REPO_ROOT}/scripts/train_preset.py" "${model_lc}" \
+            --nproc-per-node "$(( N_GPU + 1 ))" \
+            --master-port "${master_port}" \
+            "dataset=${dataset_uc}" \
+            "epoch=${FROST_EPOCHS}" \
+            "macro_batch_size=${macro_batch_size}" \
+            "stable_mode=true" \
+            "seed=${seed}" \
+            "compile=false" \
+            "tf32=false" \
+            "tqdm=true" \
+            > "${frost_log}" 2>&1; then
+          echo "FROST run failed. See ${frost_log}" >&2
+          exit 1
+        fi
+        read -r frost_eps frost_measured_batches < <(parse_frost_events_per_sec_per_gpu "${frost_log}")
+        echo "[FROST] events/sec/gpu=${frost_eps} measured_batches=${frost_measured_batches}"
+        if (( frost_measured_batches < MEASURE_BATCHES )); then
+          if (( REQUIRE_FULL_MEASURE == 1 )); then
+            echo "FROST measured only ${frost_measured_batches} batches (< ${MEASURE_BATCHES}) for ${model_lc}/${dataset_uc}/mb${macro_batch_size}" >&2
+            exit 1
+          fi
+          echo "Warning: FROST measured only ${frost_measured_batches} batches (< ${MEASURE_BATCHES}) for ${model_lc}/${dataset_uc}/mb${macro_batch_size}" >&2
+        fi
+
+        echo "[TGL] launching..."
+        if [[ -n "${MAX_TRAIN_STEPS_OVERRIDE}" ]]; then
+          tgl_max_train_steps="${MAX_TRAIN_STEPS_OVERRIDE}"
+        else
+          tgl_max_train_steps="$(compute_tgl_max_train_steps "${dataset_uc}" "${per_gpu_batch_size}" "${N_GPU}" "${WARMUP_BATCHES}" "${MEASURE_BATCHES}")"
+        fi
+        tgl_cmd=(
+          uv run --project "${SCRIPT_DIR}" python "${SCRIPT_DIR}/train_dist.py"
+          --dataset "${dataset_lc}"
+          --config "${tgl_cfg}"
+          --num_gpus "${N_GPU}"
+          --seed "${seed}"
+          --rnd_edim 0
+          --rnd_ndim 0
+          --appendix-train-e2e
+          --measure-start-epoch 0
+          --warmup-batches "${WARMUP_BATCHES}"
+          --measure-batches "${MEASURE_BATCHES}"
+          --tqdm
+        )
+        if (( tgl_max_train_steps > 0 )); then
+          tgl_cmd+=(--max-train-steps "${tgl_max_train_steps}")
+        fi
+        echo "[TGL] max_train_steps=${tgl_max_train_steps}"
+        if ! OMP_NUM_THREADS="${OMP_THREADS}" \
+          MKL_NUM_THREADS="${MKL_THREADS}" \
+          CUDA_VISIBLE_DEVICES="${GPU_IDS}" "${tgl_cmd[@]}" > "${tgl_log}" 2>&1; then
+          echo "TGL run failed. See ${tgl_log}" >&2
+          exit 1
+        fi
+        read -r tgl_eps tgl_measured_batches < <(parse_tgl_events_per_sec_per_gpu "${tgl_log}")
+        echo "[TGL] events/sec/gpu=${tgl_eps} measured_batches=${tgl_measured_batches}"
+        if (( tgl_measured_batches >= 0 && tgl_measured_batches < MEASURE_BATCHES )); then
+          if (( REQUIRE_FULL_MEASURE == 1 )); then
+            echo "TGL measured only ${tgl_measured_batches} batches (< ${MEASURE_BATCHES}) for ${model_lc}/${dataset_uc}/mb${macro_batch_size}" >&2
+            exit 1
+          fi
+          echo "Warning: TGL measured only ${tgl_measured_batches} batches (< ${MEASURE_BATCHES}) for ${model_lc}/${dataset_uc}/mb${macro_batch_size}" >&2
+        fi
+
+        speedup="$(uv run python - "${frost_eps}" "${tgl_eps}" <<'PY'
+import sys
+f = float(sys.argv[1])
+t = float(sys.argv[2])
+print(f"{(f / t) if t > 0 else float('nan'):.6f}")
+PY
+)"
+
+        printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+          "${model_lc}" "${dataset_uc}" "${seed}" "${N_GPU}" \
+          "${macro_batch_size}" "${per_gpu_batch_size}" \
+          "${frost_eps}" "${tgl_eps}" "${speedup}" \
+          "${frost_measured_batches}" "${tgl_measured_batches}" \
+          "${frost_log}" "${tgl_log}" \
+          >> "${RESULTS_TSV}"
+
+        echo "[SUMMARY] speedup_frost_over_tgl=${speedup}x"
+      done
+    done
+  done
 done
 
-uv run python "$SCRIPT_DIR/scripts/summarize_seed_sweep.py" "$RUN_DIR"
-echo "Results TSV: $RESULTS_TSV"
-echo "Summary TSV: $SUMMARY_TSV"
-echo "Summary: $SUMMARY_TXT"
+uv run python - "${RESULTS_TSV}" "${SUMMARY_TSV}" "${SUMMARY_TXT}" <<'PY'
+import csv
+import pathlib
+import statistics
+import sys
+from collections import defaultdict
+
+results_tsv = pathlib.Path(sys.argv[1])
+summary_tsv = pathlib.Path(sys.argv[2])
+summary_txt = pathlib.Path(sys.argv[3])
+
+rows = list(csv.DictReader(results_tsv.read_text().splitlines(), delimiter="\t"))
+group = defaultdict(list)
+for r in rows:
+    key = (r["model"], r["dataset"], r["macro_batch_size"])
+    group[key].append(r)
+
+summary_rows = []
+for (model, dataset, macro_batch_size), items in sorted(group.items()):
+    frost = statistics.mean(float(x["frost_events_per_sec_per_gpu"]) for x in items)
+    tgl = statistics.mean(float(x["tgl_events_per_sec_per_gpu"]) for x in items)
+    speedup = frost / tgl if tgl > 0 else float("nan")
+    summary_rows.append(
+        {
+            "model": model,
+            "dataset": dataset,
+            "macro_batch_size": macro_batch_size,
+            "runs": str(len(items)),
+            "frost_events_per_sec_per_gpu_mean": f"{frost:.6f}",
+            "tgl_events_per_sec_per_gpu_mean": f"{tgl:.6f}",
+            "speedup_frost_over_tgl_mean": f"{speedup:.6f}",
+        }
+    )
+
+with summary_tsv.open("w", encoding="utf-8", newline="") as f:
+    writer = csv.DictWriter(
+        f,
+        fieldnames=[
+            "model",
+            "dataset",
+            "macro_batch_size",
+            "runs",
+            "frost_events_per_sec_per_gpu_mean",
+            "tgl_events_per_sec_per_gpu_mean",
+            "speedup_frost_over_tgl_mean",
+        ],
+        delimiter="\t",
+    )
+    writer.writeheader()
+    writer.writerows(summary_rows)
+
+lines = ["model\tdataset\tmacro_batch_size\truns\tfrost_eps_mean\ttgl_eps_mean\tspeedup_mean"]
+for r in summary_rows:
+    lines.append(
+        f"{r['model']}\t{r['dataset']}\t{r['macro_batch_size']}\t{r['runs']}\t"
+        f"{r['frost_events_per_sec_per_gpu_mean']}\t"
+        f"{r['tgl_events_per_sec_per_gpu_mean']}\t"
+        f"{r['speedup_frost_over_tgl_mean']}"
+    )
+summary_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+echo
+echo "Results TSV: ${RESULTS_TSV}"
+echo "Summary TSV: ${SUMMARY_TSV}"
+echo "Summary TXT: ${SUMMARY_TXT}"
+cat "${SUMMARY_TXT}"

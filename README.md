@@ -148,10 +148,14 @@ The provided configuration files are all tested to be working. If you want to us
 Currently, our framework only supports extrapolation setting (inference for the future).
 
 ### Single GPU Link Prediction
->source scripts/uv-env.sh && uv run python train.py --data \<NameOfYourDataset> --config \<PathToConfigFile>
+>source scripts/uv-env.sh && export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 && uv run python train.py --data \<NameOfYourDataset> --config \<PathToConfigFile>
 
 ### MultiGPU Link Prediction
->source scripts/uv-env.sh && uv run python -m torch.distributed.run --nproc_per_node=\<NumberOfGPUs+1> train_dist.py --data \<NameOfYourDataset> --config \<PathToConfigFile> --num_gpus \<NumberOfGPUs>
+>source scripts/uv-env.sh && export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 && uv run python -m torch.distributed.run --nproc_per_node=\<NumberOfGPUs+1> train_dist.py --data \<NameOfYourDataset> --config \<PathToConfigFile> --num_gpus \<NumberOfGPUs>
+
+For the throughput comparisons in this repository, use
+`OMP_NUM_THREADS=8` and `MKL_NUM_THREADS=8` for both TGL and FROST so the
+CPU-side data pipeline runs with a matched thread budget.
 
 ### Dynamic Node Classification
 

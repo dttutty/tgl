@@ -5,10 +5,11 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+
 start_time = time.time()
 
 parser=argparse.ArgumentParser(
-    description='Distributed TGL trainer. Direct invocation auto-launches via torchrun with nproc_per_node=num_gpus+1.'
+    description='Distributed TGL trainer without train-step overlap. Direct invocation auto-launches via torchrun with nproc_per_node=num_gpus+1.'
 )
 parser.add_argument('--dataset', type=str, help='dataset name')
 parser.add_argument('--config', type=str, help='path to config file')
@@ -655,109 +656,100 @@ if args.local_rank < args.num_gpus:
                 print('\t{}'.format(format_lr_scheduler_step(lr_scheduler_step)))
             continue
         elif my_model_state[0] == 0:
-            if prev_thread is not None:
-                my_mfgs = [None]
-                multi_mfgs = [None] * (args.num_gpus + 1)
-                my_root = [None]
-                multi_root = [None] * (args.num_gpus + 1)
-                my_ts = [None]
-                multi_ts = [None] * (args.num_gpus + 1)
-                my_eid = [None]
-                multi_eid = [None] * (args.num_gpus + 1)
-                my_block = [None]
-                multi_block = [None] * (args.num_gpus + 1)
-                torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
-                if mailbox is not None:
-                    torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
-                    if memory_param['deliver_to'] == 'neighbors':
-                        torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
-                stream = torch.cuda.Stream()
-                curr_thread = DataPipelineThread(my_mfgs, my_root, my_ts, my_eid, my_block, stream)
-                curr_thread.start()
-                prev_thread.join()
-                # with torch.cuda.stream(prev_thread.get_stream()):
-                _record_train_start()
-                mfgs = prev_thread.get_mfgs()
-                
-                should_prof = False
-                
-                # ================= [新增代码 START] =================
-                # 只有在目标 epoch 才进行 profile
-                if should_prof == True and  cur_epoch == target_profile_epoch:
-                    if cur_step == 0:
-                        prof.start() # 开始第1个batch
-                        print(f"[Rank {args.local_rank}] Profiler STARTED at epoch {cur_epoch}")
-                    
-                    if cur_step < profile_steps:
-                        prof.step()  # 标记一步
-                # ================= [新增代码 END] =================
-                
-                
-                model.train()
-                optimizer.zero_grad()
-                
-                with record_function("model_step"):
-                    pred_pos, pred_neg = model(mfgs)
-                    loss = creterion(pred_pos, torch.ones_like(pred_pos))
-                    loss += creterion(pred_neg, torch.zeros_like(pred_neg))
-                    loss.backward()
-                    optimizer.step()
-                    
-                    
-                if should_prof == True and  cur_epoch == target_profile_epoch:
-                    if cur_step == profile_steps - 1:
-                        prof.stop() # 跑完10个batch后停止
-                        print(f"[Rank {args.local_rank}] Profiler STOPPED after {profile_steps} steps")
-                
-                cur_step += 1 # 增加 step 计数
+            # Allow the host to start the next batch's sampling once the current
+            # batch has finished static feature H2D. We still gate
+            # mailbox.prep_input_mails() on a barrier so dynamic state is fresh
+            # before memory/mailbox is moved to GPU.
+            my_mfgs = [None]
+            multi_mfgs = [None] * (args.num_gpus + 1)
+            my_root = [None]
+            multi_root = [None] * (args.num_gpus + 1)
+            my_ts = [None]
+            multi_ts = [None] * (args.num_gpus + 1)
+            my_eid = [None]
+            multi_eid = [None] * (args.num_gpus + 1)
+            my_block = [None]
+            multi_block = [None] * (args.num_gpus + 1)
+            torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
+            if mailbox is not None:
+                torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
+                torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
+                torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
+                if memory_param['deliver_to'] == 'neighbors':
+                    torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
+
+            mfgs = mfgs_to_cuda(my_mfgs[0])
+            prepare_input(
+                mfgs,
+                node_feats,
+                edge_feats,
+                pinned=True,
+                nfeat_buffs=pinned_nfeat_buffs,
+                efeat_buffs=pinned_efeat_buffs,
+            )
+            root_nodes = None
+            ts = None
+            eid = None
+            block = None
+            if mailbox is not None:
+                torch.distributed.barrier()
+                mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=True)
+                root_nodes = my_root[0]
+                ts = my_ts[0]
+                eid = my_eid[0]
+                if memory_param['deliver_to'] == 'neighbors':
+                    block = my_block[0]
+
+            _record_train_start()
+            should_prof = False
+
+            if should_prof == True and cur_epoch == target_profile_epoch:
+                if cur_step == 0:
+                    prof.start()
+                    print(f"[Rank {args.local_rank}] Profiler STARTED at epoch {cur_epoch}")
+                if cur_step < profile_steps:
+                    prof.step()
+
+            model.train()
+            optimizer.zero_grad()
+            with record_function("model_step"):
+                pred_pos, pred_neg = model(mfgs)
+                loss = creterion(pred_pos, torch.ones_like(pred_pos))
+                loss += creterion(pred_neg, torch.zeros_like(pred_neg))
+                loss.backward()
+                optimizer.step()
+
+            if should_prof == True and cur_epoch == target_profile_epoch:
+                if cur_step == profile_steps - 1:
+                    prof.stop()
+                    print(f"[Rank {args.local_rank}] Profiler STOPPED after {profile_steps} steps")
+
+            cur_step += 1
+            with torch.no_grad():
+                tot_loss += float(loss)
+            if mailbox is not None:
                 with torch.no_grad():
-                    tot_loss += float(loss)
-                if mailbox is not None:
-                    with torch.no_grad():
-                        eid = prev_thread.get_eid()
-                        mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
-                        root_nodes = prev_thread.get_root()
-                        ts = prev_thread.get_ts()
-                        block = prev_thread.get_block()
-                        mailbox.update_mailbox(
-                            model.module.memory_updater.last_updated_nid,
-                            model.module.memory_updater.last_updated_memory,
-                            root_nodes,
-                            ts,
-                            mem_edge_feats,
-                            block,
-                            peer_memory=getattr(model.module, 'last_mail_peer_memory', None),
-                        )
-                        mailbox.update_memory(model.module.memory_updater.last_updated_nid, model.module.memory_updater.last_updated_memory, root_nodes, model.module.memory_updater.last_updated_ts)
-                        if memory_param['deliver_to'] == 'neighbors':
-                            torch.distributed.barrier(group=nccl_group)
-                            if args.local_rank == 0:
-                                mailbox.update_next_mail_pos()
-                appendix_bench.record_memory_snapshot()
-                prev_thread = curr_thread
-            else:
-                my_mfgs = [None]
-                multi_mfgs = [None] * (args.num_gpus + 1)
-                my_root = [None]
-                multi_root = [None] * (args.num_gpus + 1)
-                my_ts = [None]
-                multi_ts = [None] * (args.num_gpus + 1)
-                my_eid = [None]
-                multi_eid = [None] * (args.num_gpus + 1)
-                my_block = [None]
-                multi_block = [None] * (args.num_gpus + 1)
-                torch.distributed.scatter_object_list(my_mfgs, multi_mfgs, src=args.num_gpus)
-                if mailbox is not None:
-                    torch.distributed.scatter_object_list(my_root, multi_root, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_ts, multi_ts, src=args.num_gpus)
-                    torch.distributed.scatter_object_list(my_eid, multi_eid, src=args.num_gpus)
+                    mem_edge_feats = gather_feature_rows(edge_feats, eid) if edge_feats is not None else None
+                    mailbox.update_mailbox(
+                        model.module.memory_updater.last_updated_nid,
+                        model.module.memory_updater.last_updated_memory,
+                        root_nodes,
+                        ts,
+                        mem_edge_feats,
+                        block,
+                        peer_memory=getattr(model.module, 'last_mail_peer_memory', None),
+                    )
+                    mailbox.update_memory(
+                        model.module.memory_updater.last_updated_nid,
+                        model.module.memory_updater.last_updated_memory,
+                        root_nodes,
+                        model.module.memory_updater.last_updated_ts,
+                    )
                     if memory_param['deliver_to'] == 'neighbors':
-                        torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
-                stream = torch.cuda.Stream()
-                prev_thread = DataPipelineThread(my_mfgs, my_root, my_ts, my_eid, my_block, stream)
-                prev_thread.start()
+                        torch.distributed.barrier(group=nccl_group)
+                        if args.local_rank == 0:
+                            mailbox.update_next_mail_pos()
+            appendix_bench.record_memory_snapshot()
         elif my_model_state[0] == 1:
             if prev_thread is not None:
                 # finish last training mini-batch
@@ -1084,6 +1076,11 @@ else:
                     multi_block.append(None)
                     my_block = [None]
                     torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
+            # Wait only until workers have completed static H2D for this batch.
+            # They will block on mailbox.prep_input_mails() until the previous
+            # batch's dynamic-state updates are visible, but the host can already
+            # begin sampling the next batch.
+            torch.distributed.barrier()
             time_tot += time.time() - t_tot_s
             time_tot += time.time() - t_tot_s
             global_train_steps += 1

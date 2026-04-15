@@ -1,7 +1,9 @@
 import argparse
+import json
 import os
 import subprocess
 from collections import deque
+from dataclasses import dataclass, field
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data", type=str, help="dataset name")
@@ -47,10 +49,46 @@ parser.add_argument(
     default=None,
     help="Batch size; if not set, use dataset default",
 )
+parser.add_argument(
+    "--appendix-train-e2e",
+    action="store_true",
+    default=False,
+    help="emit start-to-start train throughput summary for the measured window",
+)
+parser.add_argument(
+    "--measure-start-epoch",
+    type=int,
+    default=0,
+    help="first epoch whose train batches are eligible for throughput measurement",
+)
+parser.add_argument(
+    "--warmup-batches",
+    type=int,
+    default=5,
+    help="number of initial measured-train intervals to discard as warmup",
+)
+parser.add_argument(
+    "--measure-batches",
+    type=int,
+    default=100,
+    help="number of post-warmup train intervals to retain in the summary",
+)
+parser.add_argument(
+    "--max-train-steps",
+    type=int,
+    default=0,
+    help="stop training after this many train minibatches (0 disables early stop)",
+)
 args = parser.parse_args()
 
 if args.memory_update_delay_batches < 0:
     raise ValueError("--memory_update_delay_batches must be >= 0")
+if args.warmup_batches < 0:
+    raise ValueError("--warmup-batches must be >= 0")
+if args.measure_batches < 1:
+    raise ValueError("--measure-batches must be >= 1")
+if args.max_train_steps < 0:
+    raise ValueError("--max-train-steps must be >= 0")
 
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
@@ -95,6 +133,156 @@ if args.batch_size is None:
 def sync_cuda():
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+
+
+@dataclass(slots=True)
+class AppendixTrainE2EBenchmark:
+    enabled: bool
+    system: str
+    rank: int
+    compile_enabled: bool
+    batch_size: int | None
+    measure_start_epoch: int
+    warmup_batches: int
+    measure_batches: int
+    gpu_pairs: list[tuple[object, object]] = field(default_factory=list)
+    wall_ms: list[float] = field(default_factory=list)
+    reserved_mib: list[float] = field(default_factory=list)
+    allocated_mib: list[float] = field(default_factory=list)
+    train_batches_seen: int = 0
+    _last_ev: object | None = None
+    _last_wall_s: float | None = None
+
+    def reset_chain(self) -> None:
+        self._last_ev = None
+        self._last_wall_s = None
+
+    def on_train_batch_start(
+        self,
+        *,
+        epoch: int,
+        ev: object,
+        wall_time_s: float,
+    ) -> None:
+        if not self.enabled:
+            return
+        if epoch < self.measure_start_epoch:
+            self.reset_chain()
+            return
+        if self._last_ev is not None:
+            self.gpu_pairs.append((self._last_ev, ev))
+        if self._last_wall_s is not None:
+            self.wall_ms.append((wall_time_s - self._last_wall_s) * 1000.0)
+        self._last_ev = ev
+        self._last_wall_s = wall_time_s
+        self.train_batches_seen += 1
+
+    def record_memory_snapshot(self) -> None:
+        if not self.enabled or not torch.cuda.is_available():
+            return
+        self.reserved_mib.append(torch.cuda.memory_reserved() / (1024**2))
+        self.allocated_mib.append(torch.cuda.memory_allocated() / (1024**2))
+
+    def emit_summary(self) -> None:
+        if not self.enabled:
+            return
+
+        sync_cuda()
+        skipped_intervals = min(
+            self.warmup_batches,
+            len(self.wall_ms),
+            len(self.gpu_pairs),
+        )
+        gpu_pairs = self.gpu_pairs[skipped_intervals:]
+        wall_ms = self.wall_ms[skipped_intervals:]
+        if self.measure_batches > 0:
+            gpu_pairs = gpu_pairs[: self.measure_batches]
+            wall_ms = wall_ms[: self.measure_batches]
+        gpu_ms = [ev_prev.elapsed_time(ev_curr) for (ev_prev, ev_curr) in gpu_pairs]
+
+        payload: dict[str, int | float | bool | str] = {
+            "system": self.system,
+            "rank": self.rank,
+            "compile": self.compile_enabled,
+            "measure_start_epoch": self.measure_start_epoch,
+            "warmup_batches": self.warmup_batches,
+            "measure_batches_target": self.measure_batches,
+            "train_batches_seen": self.train_batches_seen,
+            "interval_count_raw": len(self.wall_ms),
+            "interval_count": len(wall_ms),
+            "skipped_intervals": skipped_intervals,
+        }
+        if wall_ms:
+            ordered_wall = sorted(wall_ms)
+            n = len(ordered_wall)
+            mean_wall = sum(ordered_wall) / n
+            var_wall = (
+                sum((value - mean_wall) ** 2 for value in ordered_wall) / n
+                if n > 1
+                else 0.0
+            )
+            payload.update(
+                {
+                    "avg_wall_ms": mean_wall,
+                    "std_wall_ms": var_wall**0.5,
+                    "p50_wall_ms": ordered_wall[int(0.50 * (n - 1))],
+                    "p90_wall_ms": ordered_wall[int(0.90 * (n - 1))],
+                    "p99_wall_ms": ordered_wall[int(0.99 * (n - 1))],
+                }
+            )
+            if self.batch_size is not None and self.batch_size > 0 and mean_wall > 0:
+                payload["events_per_sec_per_gpu"] = (
+                    float(self.batch_size) * 1000.0 / mean_wall
+                )
+        if gpu_ms:
+            ordered_gpu = sorted(gpu_ms)
+            n_gpu = len(ordered_gpu)
+            mean_gpu = sum(ordered_gpu) / n_gpu
+            var_gpu = (
+                sum((value - mean_gpu) ** 2 for value in ordered_gpu) / n_gpu
+                if n_gpu > 1
+                else 0.0
+            )
+            payload.update(
+                {
+                    "avg_gpu_ms": mean_gpu,
+                    "std_gpu_ms": var_gpu**0.5,
+                    "p50_gpu_ms": ordered_gpu[int(0.50 * (n_gpu - 1))],
+                    "p90_gpu_ms": ordered_gpu[int(0.90 * (n_gpu - 1))],
+                    "p99_gpu_ms": ordered_gpu[int(0.99 * (n_gpu - 1))],
+                }
+            )
+
+        skipped_memory = min(self.warmup_batches, len(self.reserved_mib), len(self.allocated_mib))
+        reserved_mib = self.reserved_mib[skipped_memory:]
+        allocated_mib = self.allocated_mib[skipped_memory:]
+        if self.measure_batches > 0:
+            reserved_mib = reserved_mib[: self.measure_batches]
+            allocated_mib = allocated_mib[: self.measure_batches]
+        payload["memory_measured_batches"] = len(reserved_mib)
+        if reserved_mib:
+            ordered_reserved = sorted(reserved_mib)
+            n_reserved = len(ordered_reserved)
+            payload.update(
+                {
+                    "reserved_mib_mean": sum(ordered_reserved) / n_reserved,
+                    "reserved_mib_p50": ordered_reserved[int(0.50 * (n_reserved - 1))],
+                    "reserved_mib_p90": ordered_reserved[int(0.90 * (n_reserved - 1))],
+                    "reserved_mib_max": ordered_reserved[-1],
+                }
+            )
+        if allocated_mib:
+            ordered_allocated = sorted(allocated_mib)
+            n_allocated = len(ordered_allocated)
+            payload.update(
+                {
+                    "allocated_mib_mean": sum(ordered_allocated) / n_allocated,
+                    "allocated_mib_p50": ordered_allocated[int(0.50 * (n_allocated - 1))],
+                    "allocated_mib_p90": ordered_allocated[int(0.90 * (n_allocated - 1))],
+                    "allocated_mib_max": ordered_allocated[-1],
+                }
+            )
+        print(f"APPENDIX_TRAIN_E2E_SUMMARY {json.dumps(payload, sort_keys=True)}")
 
 
 if args.seed is not None:
@@ -349,6 +537,18 @@ avg_time_forward = 0.0
 avg_time_backward = 0.0
 avg_time_memory_update = 0.0
 avg_time_tot = 0.0
+appendix_bench = AppendixTrainE2EBenchmark(
+    enabled=args.appendix_train_e2e,
+    system="tgl_serial",
+    rank=0,
+    compile_enabled=False,
+    batch_size=train_param["batch_size"],
+    measure_start_epoch=args.measure_start_epoch,
+    warmup_batches=args.warmup_batches,
+    measure_batches=args.measure_batches,
+)
+global_train_steps = 0
+early_stop = False
 if mailbox is not None and args.memory_update_delay_batches > 0:
     print(
         "Delayed memory update enabled: {} minibatch(es)".format(
@@ -366,6 +566,7 @@ for e in range(train_param["epoch"]):
     time_memory_update = 0.0
     time_tot = 0.0
     total_loss = 0.0
+    appendix_bench.reset_chain()
     # training
     model.train()
     if sampler is not None:
@@ -396,6 +597,13 @@ for e in range(train_param["epoch"]):
     for _, rows in df[:train_edge_end].groupby(
         df[:train_edge_end].index // train_param["batch_size"]
     ):
+        ev = torch.cuda.Event(enable_timing=True)
+        ev.record(torch.cuda.current_stream())
+        appendix_bench.on_train_batch_start(
+            epoch=e,
+            ev=ev,
+            wall_time_s=time.perf_counter(),
+        )
         t_tot_s = time.time()
         batch_src = rows.src.values
         batch_eid = (
@@ -501,7 +709,16 @@ for e in range(train_param["epoch"]):
 
             sync_cuda()
             time_memory_update += time.perf_counter() - t_memory_update_s
+        appendix_bench.record_memory_snapshot()
         time_tot += time.time() - t_tot_s
+        global_train_steps += 1
+        if args.max_train_steps > 0 and global_train_steps >= args.max_train_steps:
+            print(
+                f"Reached max_train_steps={args.max_train_steps}; "
+                "stopping training loop early for throughput measurement."
+            )
+            early_stop = True
+            break
 
     if mailbox is not None and len(memory_update_queue) > 0:
         t_memory_update_s = time.perf_counter()
@@ -509,6 +726,10 @@ for e in range(train_param["epoch"]):
             flush_memory_update(memory_update_queue.popleft())
         sync_cuda()
         time_memory_update += time.perf_counter() - t_memory_update_s
+
+    if early_stop:
+        appendix_bench.emit_summary()
+        raise SystemExit(0)
 
     ap, auc = eval("val")
     test_ap, test_auc = eval("test")
