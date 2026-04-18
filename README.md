@@ -99,7 +99,7 @@ python train_non_timing_on_gpu.py --data <NameOfYourDataset> --config <PathToCon
 
 The launchers under `accuracy_experiment/` start nested Python commands. Some of
 the shell wrappers, including
-[`accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh`](accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh),
+[`accuracy_experiment/compare_ap_tgl_vs_reference/0_run.sh`](accuracy_experiment/compare_ap_tgl_vs_reference/0_run.sh),
 fall back to `.venv/bin/python` unless `PYTHON_BIN` is set explicitly.
 
 For the Blackwell stack, do not launch these jobs with `uv run` or
@@ -113,13 +113,13 @@ export PYTHON_BIN="$PWD/.venv-blackwell/bin/python"
 ```
 
 The AP comparison experiment in
-[`accuracy_experiment/compare_ap_tgl_vs_frost/0_run.yaml`](accuracy_experiment/compare_ap_tgl_vs_frost/0_run.yaml)
+[`accuracy_experiment/compare_ap_tgl_vs_reference/0_run.yaml`](accuracy_experiment/compare_ap_tgl_vs_reference/0_run.yaml)
 uses exactly 2 GPUs per job, so run it through
 [`accuracy_experiment/run_on_gpu_pairs.py`](accuracy_experiment/run_on_gpu_pairs.py):
 
 ```bash
 python accuracy_experiment/run_on_gpu_pairs.py \
-  --script accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh
+  --script accuracy_experiment/compare_ap_tgl_vs_reference/0_run.sh
 ```
 
 Optional flags:
@@ -154,7 +154,7 @@ Currently, our framework only supports extrapolation setting (inference for the 
 >source scripts/uv-env.sh && export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 && uv run python -m torch.distributed.run --nproc_per_node=\<NumberOfGPUs+1> train_dist.py --data \<NameOfYourDataset> --config \<PathToConfigFile> --num_gpus \<NumberOfGPUs>
 
 For the throughput comparisons in this repository, use
-`OMP_NUM_THREADS=8` and `MKL_NUM_THREADS=8` for both TGL and FROST so the
+`OMP_NUM_THREADS=8` and `MKL_NUM_THREADS=8` for both TGL and the main project so the
 CPU-side data pipeline runs with a matched thread budget.
 
 ### Dynamic Node Classification

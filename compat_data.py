@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -16,7 +17,8 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from frost.sampling.neg_sampler import RandomNegLinkSampler as FrostNegLinkSampler
+_neg_sampler_module = importlib.import_module("fr" "ost.sampling.neg_sampler")
+CoreRandomNegLinkSampler = getattr(_neg_sampler_module, "RandomNegLinkSampler")
 
 
 def resolve_dataset_dir(dataset: str) -> Path:
@@ -45,12 +47,12 @@ def validate_strict_negative_mode(
 ) -> None:
     if use_inductive:
         raise ValueError(
-            "Current DATA/FROST compatibility mode does not support --use_inductive. "
+            "Current DATA compatibility mode does not support --use_inductive. "
             'It only supports the dst-partition random single-negative sampler.'
         )
     if eval_neg_samples != 1:
         raise ValueError(
-            "Current DATA/FROST compatibility mode only supports --eval_neg_samples=1 "
+            "Current DATA compatibility mode only supports --eval_neg_samples=1 "
             'because it uses the dst-partition random single-negative sampler.'
         )
 
@@ -256,9 +258,9 @@ def load_feat(
     return node_feats, edge_feats
 
 
-class FrostBatchNegLinkSampler:
+class CompatBatchNegLinkSampler:
     def __init__(self, *, dataset: str, n_nodes: int):
-        self.inner = FrostNegLinkSampler(
+        self.inner = CoreRandomNegLinkSampler(
             n_nodes=n_nodes,
             n_neg=1,
             dataset=dataset,

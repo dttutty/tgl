@@ -60,13 +60,13 @@ from shm_naming import init_run_id, build_shm_namer
 import torch.distributed as dist # 确保已有或添加
 from torch.profiler import profile, record_function, ProfilerActivity # 新增
 from torch.distributed.algorithms.ddp_comm_hooks.default_hooks import allreduce_hook
-from frost_data import (
-    FrostBatchNegLinkSampler,
+from compat_data import (
+    CompatBatchNegLinkSampler,
     compute_split_boundaries,
     load_dataset_counts,
     load_edges_df,
-    load_feat as load_frost_feat,
-    load_graph as load_frost_graph,
+    load_feat as load_compat_feat,
+    load_graph as load_compat_graph,
 )
 
 if args.seed is not None:
@@ -95,7 +95,7 @@ nccl_group = torch.distributed.new_group(ranks=list(range(args.num_gpus)), backe
 
 if args.local_rank == 0:
     _num_nodes, _num_edges = load_dataset_counts(args.dataset)
-    _node_feats, _edge_feats = load_frost_feat(
+    _node_feats, _edge_feats = load_compat_feat(
         args.dataset,
         args.rnd_edim,
         args.rnd_ndim,
@@ -142,7 +142,7 @@ torch.distributed.broadcast_object_list(path_saver, src=0)
 path_saver = path_saver[0]
 
 if args.local_rank == args.num_gpus:
-    g = load_frost_graph(args.dataset)
+    g = load_compat_graph(args.dataset)
     df = load_edges_df(args.dataset)
     num_nodes = [g['indptr'].shape[0] - 1]
 else:
@@ -669,7 +669,7 @@ else:
                                   sample_param['num_thread'], 1, sample_param['layer'], sample_param['neighbor'],
                                   sample_param['strategy']=='recent', sample_param['prop_time'],
                                   sample_param['history'], int(sample_param['duration']))
-    neg_link_sampler = FrostBatchNegLinkSampler(
+    neg_link_sampler = CompatBatchNegLinkSampler(
         dataset=args.dataset,
         n_nodes=g['indptr'].shape[0] - 1,
     )

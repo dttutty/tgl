@@ -11,13 +11,13 @@ ROW_SEP=$'\x1f'
 usage() {
     cat <<'EOF'
 Usage:
-  bash accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh [GPU_IDS]
-  python accuracy_experiment/run_on_gpu_pairs.py --script accuracy_experiment/compare_ap_tgl_vs_frost/0_run.sh [--gpus 0,1,2,3]
+  bash accuracy_experiment/compare_ap_tgl_vs_reference/0_run.sh [GPU_IDS]
+  python accuracy_experiment/run_on_gpu_pairs.py --script accuracy_experiment/compare_ap_tgl_vs_reference/0_run.sh [--gpus 0,1,2,3]
 
-This script defines compare_ap_tgl_vs_frost jobs.
+This script defines compare_ap_tgl_vs_reference jobs.
 When called normally, it delegates scheduling to accuracy_experiment/run_on_gpu_pairs.py.
 When called with --emit-jobs, it prints job definitions for the scheduler.
-Experiment settings are loaded from accuracy_experiment/compare_ap_tgl_vs_frost/0_run.yaml.
+Experiment settings are loaded from accuracy_experiment/compare_ap_tgl_vs_reference/0_run.yaml.
 Each emitted job always uses exactly 2 GPUs.
 EOF
 }

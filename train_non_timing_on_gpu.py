@@ -21,7 +21,7 @@ if args.memory_update_delay_batches < 0:
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 
-from frost_data import validate_strict_negative_mode
+from compat_data import validate_strict_negative_mode
 
 validate_strict_negative_mode(
     use_inductive=args.use_inductive,
@@ -36,12 +36,12 @@ from modules import *
 from sampler import *
 from utils import *
 from sklearn.metrics import average_precision_score, roc_auc_score
-from frost_data import (
-    FrostBatchNegLinkSampler,
+from compat_data import (
+    CompatBatchNegLinkSampler,
     compute_split_boundaries,
     load_edges_df,
-    load_feat as load_frost_feat,
-    load_graph as load_frost_graph,
+    load_feat as load_compat_feat,
+    load_graph as load_compat_graph,
 )
 
 if args.seed is not None:
@@ -56,10 +56,10 @@ print_run_configuration(
     train_param,
     config_path=args.config,
 )
-g = load_frost_graph(args.data)
+g = load_compat_graph(args.data)
 df = load_edges_df(args.data)
 train_edge_end, val_edge_end = compute_split_boundaries(df)
-node_feats, edge_feats = load_frost_feat(
+node_feats, edge_feats = load_compat_feat(
     args.data,
     args.rand_edge_features,
     args.rand_node_features,
@@ -123,7 +123,7 @@ if args.use_inductive:
     print("inductive nodes", len(inductive_nodes))
     neg_link_sampler = NegLinkInductiveSampler(inductive_nodes)
 else:
-    neg_link_sampler = FrostBatchNegLinkSampler(
+    neg_link_sampler = CompatBatchNegLinkSampler(
         dataset=args.data,
         n_nodes=g['indptr'].shape[0] - 1,
     )

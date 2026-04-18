@@ -102,7 +102,7 @@ def main() -> None:
     default_log_dir = script_dir / "logs"
 
     parser = argparse.ArgumentParser(
-        description="Parse compare_ap_tgl_vs_frost logs and summarize final test AP by mem_dim."
+        description="Parse compare_ap_tgl_vs_reference logs and summarize final test AP by mem_dim."
     )
     parser.add_argument("--log_dir", type=Path, default=default_log_dir)
     parser.add_argument("--output", type=Path, default=None, help="Per-run parsed CSV path.")

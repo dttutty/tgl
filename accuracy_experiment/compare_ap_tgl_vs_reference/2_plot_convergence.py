@@ -272,7 +272,7 @@ def main() -> None:
     default_log_dir = script_dir / "logs"
     default_output_dir = default_log_dir / "plots"
 
-    parser = argparse.ArgumentParser(description="Plot per-epoch convergence curves from compare_ap_tgl_vs_frost logs.")
+    parser = argparse.ArgumentParser(description="Plot per-epoch convergence curves from compare_ap_tgl_vs_reference logs.")
     parser.add_argument("--log_dir", type=Path, default=default_log_dir, help="Directory containing .log files.")
     parser.add_argument("--output_dir", type=Path, default=default_output_dir, help="Directory for generated plot images.")
     parser.add_argument("--dpi", type=int, default=160, help="Figure DPI for PNG output.")

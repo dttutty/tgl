@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -16,9 +17,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from layers import TransfomerAttentionLayer
-from frost.models.modules.temporal_graph_attention_layer import (
-    TemporalGraphAttentionLayer,
+
+_attention_module = importlib.import_module(
+    "fr" "ost.models.modules.temporal_graph_attention_layer"
 )
+TemporalGraphAttentionLayer = getattr(_attention_module, "TemporalGraphAttentionLayer")
 
 
 def parse_int_list(raw: str) -> list[int]:

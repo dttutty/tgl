@@ -100,11 +100,12 @@ from modules import *
 from sampler import *
 from utils import *
 from sklearn.metrics import average_precision_score, roc_auc_score
-from frost_data import FrostBatchNegLinkSampler
+from compat_data import CompatBatchNegLinkSampler
 
 # Auto set batch size from dataset defaults if not specified
 if args.batch_size is None:
-    dataset_defaults_sh = "/home/sqp17/Projects/frost/DATA/dataset_defaults.sh"
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    dataset_defaults_sh = os.path.join(project_root, "DATA", "dataset_defaults.sh")
     if os.path.exists(dataset_defaults_sh):
         result = subprocess.run(
             [
@@ -382,7 +383,7 @@ if args.use_inductive:
     print("inductive nodes", len(inductive_nodes))
     neg_link_sampler = NegLinkInductiveSampler(inductive_nodes)
 else:
-    neg_link_sampler = FrostBatchNegLinkSampler(
+    neg_link_sampler = CompatBatchNegLinkSampler(
         dataset=args.data,
         n_nodes=g["indptr"].shape[0] - 1,
     )
@@ -418,7 +419,7 @@ def eval(mode="val"):
                 if "eid" in rows.columns
                 else rows.index.to_numpy(dtype=np.int64, copy=False)
             )
-            # Note: FrostBatchNegLinkSampler only supports 1 negative sample per edge
+            # Note: CompatBatchNegLinkSampler only supports 1 negative sample per edge
             neg_dst = neg_link_sampler.sample(batch_src, batch_eid)
             if neg_samples > 1:
                 neg_dst = np.tile(neg_dst, neg_samples)

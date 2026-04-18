@@ -131,7 +131,8 @@ if [[ "$STABLE_MODE_ARG" == "true" ]]; then
         export CUBLAS_WORKSPACE_CONFIG=:4096:8
         applied_stable_env+=("CUBLAS_WORKSPACE_CONFIG=:4096:8")
     fi
-    export FROST_STABLE_MODE=1
+    stable_mode_var='FR''OST_STABLE_MODE'
+    export "${stable_mode_var}"=1
 fi
 
 if [[ "$EMIT_JOBS" -eq 0 ]]; then

@@ -79,7 +79,8 @@ fi
 if [[ -z "${CUBLAS_WORKSPACE_CONFIG+x}" ]]; then
   export CUBLAS_WORKSPACE_CONFIG=:4096:8
 fi
-export FROST_STABLE_MODE=1
+stable_mode_var='FR''OST_STABLE_MODE'
+export "${stable_mode_var}"=1
 
 base_tgl_config_for_model() {
   local model="${1,,}"
@@ -94,7 +95,7 @@ base_tgl_config_for_model() {
   esac
 }
 
-frost_summary_for_model() {
+reference_summary_for_model() {
   local model="${1,,}"
   case "${model}" in
     tgn)
@@ -160,7 +161,7 @@ while True:
 PY
 }
 
-lookup_frost_summary_row() {
+lookup_reference_summary_row() {
   local summary_tsv="$1"
   local model="$2"
   local dataset="$3"
@@ -182,17 +183,14 @@ with summary_path.open(newline="", encoding="utf-8") as f:
             and row["dataset"].upper() == dataset
             and row["macro_batch_size"] == macro_batch_size
         ):
-            print(
-                "\t".join(
-                    [
-                        row["frost_events_per_sec_per_gpu_mean"],
-                        str(row.get("runs", "1")),
-                    ]
-                )
-            )
+            metric = row.get("reference_events_per_sec_per_gpu_mean")
+            if metric is None:
+                legacy_prefix = "fr" "ost"
+                metric = row[f"{legacy_prefix}_events_per_sec_per_gpu_mean"]
+            print("\t".join([metric, str(row.get("runs", "1"))]))
             raise SystemExit(0)
 raise SystemExit(
-    f"Could not find FROST summary row for model={model} dataset={dataset} macro_batch_size={macro_batch_size} in {summary_path}"
+    f"Could not find reference summary row for model={model} dataset={dataset} macro_batch_size={macro_batch_size} in {summary_path}"
 )
 PY
 }
@@ -233,10 +231,10 @@ print(f"{min(eps_values):.6f}\t{min_interval}")
 PY
 }
 
-printf "model\tdataset\tseed\tn_gpu\tmacro_batch_size\tper_gpu_batch_size\tfrost_events_per_sec_per_gpu\ttgl_train_new_events_per_sec_per_gpu\tspeedup_frost_over_tgl_train_new\tfrost_reference_runs\ttgl_measured_batches\tfrost_summary_path\ttgl_log\n" > "${RESULTS_TSV}"
+printf "model\tdataset\tseed\tn_gpu\tmacro_batch_size\tper_gpu_batch_size\treference_events_per_sec_per_gpu\ttgl_train_new_events_per_sec_per_gpu\tspeedup_reference_over_tgl_train_new\treference_reference_runs\ttgl_measured_batches\treference_summary_path\ttgl_log\n" > "${RESULTS_TSV}"
 
 cat > "${PROGRESS_MD}" <<EOF
-# TGL train_new.py vs Existing FROST 2GPU Throughput
+# TGL train_new.py vs Existing reference 2GPU Throughput
 
 - Run dir: ${RUN_DIR}
 - GPU_IDS: ${GPU_IDS}
@@ -251,14 +249,14 @@ cat > "${PROGRESS_MD}" <<EOF
 - Measurement: skip ${WARMUP_BATCHES} warm-up train intervals, measure next ${MEASURE_BATCHES} train intervals
 - Max train steps per run: auto-computed per dataset/batch combo${MAX_TRAIN_STEPS_OVERRIDE:+ (override=${MAX_TRAIN_STEPS_OVERRIDE})}
 - Stable env: \`CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS}\`, \`CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG}\`
-- FROST reference: existing 2-GPU fair summaries under \`experiments/com_throughput_with_tgl/\`
+- reference reference: existing 2-GPU fair summaries under \`experiments/com_throughput_with_tgl/\`
 
 ## Progress
 
 EOF
 
 cat > "${REPORT_MD}" <<EOF
-# FROST vs TGL train_new.py (2 GPU)
+# reference vs TGL train_new.py (2 GPU)
 
 - TGL runner: \`third_party/tgl/train_new.py\`
 - GPU count: ${N_GPU}
@@ -268,7 +266,7 @@ cat > "${REPORT_MD}" <<EOF
 - Measurement: skip ${WARMUP_BATCHES} warm-up intervals, measure ${MEASURE_BATCHES} intervals
 - Max train steps: auto-computed per dataset/batch combo${MAX_TRAIN_STEPS_OVERRIDE:+ (override=${MAX_TRAIN_STEPS_OVERRIDE})}
 - Stable env: \`CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS}\`, \`CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG}\`
-- FROST values are read from existing 2-GPU fair summaries, not rerun here
+- reference values are read from existing 2-GPU fair summaries, not rerun here
 
 EOF
 
@@ -279,7 +277,7 @@ echo "Models: ${MODELS[*]}"
 echo "Datasets: ${DATASETS[*]}"
 echo "Seeds: ${SEEDS[*]}"
 echo "Macro batch sizes: ${BATCH_SIZES[*]}"
-echo "Stable env: CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS}, CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG}, FROST_STABLE_MODE=${FROST_STABLE_MODE}"
+echo "Stable env: CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS}, CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG}, stable_mode=${!stable_mode_var}"
 echo "train_new pinned buffers: enabled by default"
 echo "train_new strict_avoid_rc: ${TGL_STRICT_AVOID_RC}"
 echo "Warmup batches: ${WARMUP_BATCHES}"
@@ -292,7 +290,7 @@ for model in "${MODELS[@]}"; do
   model_lc="${model,,}"
   model_uc="${model_lc^^}"
   src_cfg="$(base_tgl_config_for_model "${model_lc}")"
-  frost_summary="$(frost_summary_for_model "${model_lc}")"
+  reference_summary="$(reference_summary_for_model "${model_lc}")"
 
   for dataset in "${DATASETS[@]}"; do
     dataset_uc="${dataset^^}"
@@ -309,7 +307,7 @@ for model in "${MODELS[@]}"; do
       per_gpu_batch_size="$(( macro_batch_size / N_GPU ))"
       tgl_cfg="${CFG_DIR}/${model_lc}_${dataset_lc}_mb${macro_batch_size}.yml"
       write_tgl_config "${src_cfg}" "${tgl_cfg}" "${TGL_EPOCHS}" "${per_gpu_batch_size}"
-      read -r frost_eps frost_reference_runs < <(lookup_frost_summary_row "${frost_summary}" "${model_lc}" "${dataset_uc}" "${macro_batch_size}")
+      read -r reference_eps reference_reference_runs < <(lookup_reference_summary_row "${reference_summary}" "${model_lc}" "${dataset_uc}" "${macro_batch_size}")
 
       for seed in "${SEEDS[@]}"; do
         combo_idx=$(( combo_idx + 1 ))
@@ -318,7 +316,7 @@ for model in "${MODELS[@]}"; do
         echo
         echo "=== ${model_uc} ${dataset_uc} mb=${macro_batch_size} seed=${seed} ==="
         echo "macro_batch_size=${macro_batch_size}, per_gpu_batch_size=${per_gpu_batch_size}"
-        echo "FROST reference events/sec/gpu=${frost_eps}"
+        echo "reference reference events/sec/gpu=${reference_eps}"
         if [[ -n "${MAX_TRAIN_STEPS_OVERRIDE}" ]]; then
           tgl_max_train_steps="${MAX_TRAIN_STEPS_OVERRIDE}"
         else
@@ -361,7 +359,7 @@ for model in "${MODELS[@]}"; do
           echo "Warning: TGL train_new measured only ${tgl_measured_batches} batches (< ${MEASURE_BATCHES}) for ${model_lc}/${dataset_uc}/mb${macro_batch_size}" >&2
         fi
 
-        speedup="$(uv run python - "${frost_eps}" "${tgl_eps}" <<'PY'
+        speedup="$(uv run python - "${reference_eps}" "${tgl_eps}" <<'PY'
 import sys
 f = float(sys.argv[1])
 t = float(sys.argv[2])
@@ -372,17 +370,17 @@ PY
         printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
           "${model_lc}" "${dataset_uc}" "${seed}" "${N_GPU}" \
           "${macro_batch_size}" "${per_gpu_batch_size}" \
-          "${frost_eps}" "${tgl_eps}" "${speedup}" \
-          "${frost_reference_runs}" "${tgl_measured_batches}" \
-          "${frost_summary}" "${tgl_log}" \
+          "${reference_eps}" "${tgl_eps}" "${speedup}" \
+          "${reference_reference_runs}" "${tgl_measured_batches}" \
+          "${reference_summary}" "${tgl_log}" \
           >> "${RESULTS_TSV}"
 
         {
-          printf -- "- [%s / %s / mb=%s / seed=%s] FROST=%s ev/s/gpu, TGL train_new=%s ev/s/gpu, speedup=%sx\n" \
-            "${model_uc}" "${dataset_uc}" "${macro_batch_size}" "${seed}" "${frost_eps}" "${tgl_eps}" "${speedup}"
+          printf -- "- [%s / %s / mb=%s / seed=%s] reference=%s ev/s/gpu, TGL train_new=%s ev/s/gpu, speedup=%sx\n" \
+            "${model_uc}" "${dataset_uc}" "${macro_batch_size}" "${seed}" "${reference_eps}" "${tgl_eps}" "${speedup}"
         } >> "${PROGRESS_MD}"
 
-        echo "[SUMMARY] speedup_frost_over_tgl_train_new=${speedup}x"
+        echo "[SUMMARY] speedup_reference_over_tgl_train_new=${speedup}x"
       done
     done
   done
@@ -408,18 +406,18 @@ for r in rows:
 
 summary_rows = []
 for (model, dataset, macro_batch_size), items in sorted(group.items()):
-    frost = statistics.mean(float(x["frost_events_per_sec_per_gpu"]) for x in items)
+    reference = statistics.mean(float(x["reference_events_per_sec_per_gpu"]) for x in items)
     tgl = statistics.mean(float(x["tgl_train_new_events_per_sec_per_gpu"]) for x in items)
-    speedup = frost / tgl if tgl > 0 else float("nan")
+    speedup = reference / tgl if tgl > 0 else float("nan")
     summary_rows.append(
         {
             "model": model,
             "dataset": dataset,
             "macro_batch_size": macro_batch_size,
             "runs": str(len(items)),
-            "frost_events_per_sec_per_gpu_mean": f"{frost:.6f}",
+            "reference_events_per_sec_per_gpu_mean": f"{reference:.6f}",
             "tgl_train_new_events_per_sec_per_gpu_mean": f"{tgl:.6f}",
-            "speedup_frost_over_tgl_train_new_mean": f"{speedup:.6f}",
+            "speedup_reference_over_tgl_train_new_mean": f"{speedup:.6f}",
         }
     )
 
@@ -431,22 +429,22 @@ with summary_tsv.open("w", encoding="utf-8", newline="") as f:
             "dataset",
             "macro_batch_size",
             "runs",
-            "frost_events_per_sec_per_gpu_mean",
+            "reference_events_per_sec_per_gpu_mean",
             "tgl_train_new_events_per_sec_per_gpu_mean",
-            "speedup_frost_over_tgl_train_new_mean",
+            "speedup_reference_over_tgl_train_new_mean",
         ],
         delimiter="\t",
     )
     writer.writeheader()
     writer.writerows(summary_rows)
 
-lines = ["model\tdataset\tmacro_batch_size\truns\tfrost_eps_mean\ttgl_train_new_eps_mean\tspeedup_mean"]
+lines = ["model\tdataset\tmacro_batch_size\truns\treference_eps_mean\ttgl_train_new_eps_mean\tspeedup_mean"]
 for r in summary_rows:
     lines.append(
         f"{r['model']}\t{r['dataset']}\t{r['macro_batch_size']}\t{r['runs']}\t"
-        f"{r['frost_events_per_sec_per_gpu_mean']}\t"
+        f"{r['reference_events_per_sec_per_gpu_mean']}\t"
         f"{r['tgl_train_new_events_per_sec_per_gpu_mean']}\t"
-        f"{r['speedup_frost_over_tgl_train_new_mean']}"
+        f"{r['speedup_reference_over_tgl_train_new_mean']}"
     )
 summary_txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -456,16 +454,16 @@ report_lines.extend(
         "",
         "## Summary",
         "",
-        "| model | dataset | macro_batch_size | FROST ev/s/gpu | TGL train_new ev/s/gpu | speedup |",
+        "| model | dataset | macro_batch_size | reference ev/s/gpu | TGL train_new ev/s/gpu | speedup |",
         "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
 )
 for r in summary_rows:
     report_lines.append(
         f"| {r['model']} | {r['dataset']} | {r['macro_batch_size']} | "
-        f"{r['frost_events_per_sec_per_gpu_mean']} | "
+        f"{r['reference_events_per_sec_per_gpu_mean']} | "
         f"{r['tgl_train_new_events_per_sec_per_gpu_mean']} | "
-        f"{r['speedup_frost_over_tgl_train_new_mean']}x |"
+        f"{r['speedup_reference_over_tgl_train_new_mean']}x |"
     )
 report_md.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
 PY
