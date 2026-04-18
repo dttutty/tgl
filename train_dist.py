@@ -4,8 +4,14 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
+try:
+    import psutil
+except ImportError:  # pragma: no cover - optional dependency in prod envs
+    psutil = None
 
 start_time = time.time()
+_CLOCK_TICKS_PER_SEC = max(int(os.sysconf("SC_CLK_TCK")), 1)
 
 parser=argparse.ArgumentParser(
     description='Distributed TGL trainer. Direct invocation auto-launches via torchrun with nproc_per_node=num_gpus+1.'
@@ -64,6 +70,18 @@ parser.add_argument(
     default=0,
     help='Cap appendix interval statistics to this many post-warmup train intervals (0 means disabled).',
 )
+parser.add_argument(
+    '--gpu-util-curve',
+    action='store_true',
+    default=False,
+    help='Emit per-minibatch GPU busy ratio curves (gpu_ms / wall_ms) aligned to appendix train intervals.',
+)
+parser.add_argument(
+    '--cpu-util-benchmark',
+    action='store_true',
+    default=False,
+    help='Emit per-minibatch CPU used-cores / utilization curves aligned to train start->start intervals.',
+)
 args=parser.parse_args()
 if args.measure_start_epoch < 0:
     raise ValueError('--measure-start-epoch must be >= 0')
@@ -73,6 +91,72 @@ if args.max_train_steps < 0:
     raise ValueError('--max-train-steps must be >= 0')
 if args.measure_batches < 0:
     raise ValueError('--measure-batches must be >= 0')
+def discover_sibling_rank_pids() -> list[int]:
+    pid = os.getpid()
+    try:
+        if psutil is not None:
+            proc = psutil.Process(pid)
+            parent = proc.parent()
+            if parent is None:
+                return [pid]
+            child_pids = sorted({child.pid for child in parent.children(recursive=False)})
+            return child_pids or [pid]
+
+        text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        rparen = text.rfind(")")
+        if rparen == -1:
+            return [pid]
+        tail = text[rparen + 2 :].split()
+        parent_pid = int(tail[1])
+        if parent_pid <= 1:
+            return [pid]
+        child_pids: list[int] = []
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                sibling_text = (entry / "stat").read_text(encoding="utf-8")
+                sibling_rparen = sibling_text.rfind(")")
+                if sibling_rparen == -1:
+                    continue
+                sibling_tail = sibling_text[sibling_rparen + 2 :].split()
+                if int(sibling_tail[1]) == parent_pid:
+                    child_pids.append(int(entry.name))
+            except (OSError, ValueError):
+                continue
+        return sorted(set(child_pids)) or [pid]
+    except (psutil.Error, OSError, ValueError):
+        return [pid]
+
+
+def sample_total_cpu_time_s(pid_list: list[int]) -> tuple[float, list[int]]:
+    total = 0.0
+    live_pids: list[int] = []
+    for pid in pid_list:
+        try:
+            if psutil is not None:
+                proc = psutil.Process(pid)
+                cpu_times = proc.cpu_times()
+                total += float(cpu_times.user) + float(cpu_times.system)
+            else:
+                text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+                rparen = text.rfind(")")
+                if rparen == -1:
+                    continue
+                tail = text[rparen + 2 :].split()
+                utime_ticks = int(tail[11])
+                stime_ticks = int(tail[12])
+                total += (utime_ticks + stime_ticks) / _CLOCK_TICKS_PER_SEC
+        except (
+            psutil.NoSuchProcess if psutil is not None else ProcessLookupError,
+            psutil.AccessDenied if psutil is not None else PermissionError,
+            psutil.ZombieProcess if psutil is not None else ChildProcessError,
+            OSError,
+            ValueError,
+        ):
+            continue
+        live_pids.append(pid)
+    return total, live_pids
 
 
 def _launched_via_torchrun() -> bool:
@@ -179,13 +263,36 @@ class AppendixTrainE2EBenchmark:
     wall_ms: list[float] = field(default_factory=list)
     reserved_mib: list[float] = field(default_factory=list)
     allocated_mib: list[float] = field(default_factory=list)
+    gpu_curve_enabled: bool = False
+    cpu_enabled: bool = False
+    cpu_pid_list: list[int] = field(default_factory=list)
+    cpu_logical_count: int = 0
+    cpu_used_cores: list[float] = field(default_factory=list)
+    cpu_utilization_pct: list[float] = field(default_factory=list)
+    cpu_wall_s: list[float] = field(default_factory=list)
     train_batches_seen: int = 0
     _last_ev: object | None = None
     _last_wall_s: float | None = None
+    _last_wall_unix_s: float | None = None
+    _last_cpu_total_s: float | None = None
+    interval_start_unix_s: list[float] = field(default_factory=list)
+    interval_end_unix_s: list[float] = field(default_factory=list)
+
+    def configure_cpu_benchmark(self, pid_list: list[int]) -> None:
+        if not self.cpu_enabled:
+            return
+        self.cpu_pid_list = [int(pid) for pid in pid_list]
+        if psutil is not None:
+            logical_cpu_count = int(psutil.cpu_count(logical=True) or 1)
+        else:
+            logical_cpu_count = int(os.cpu_count() or 1)
+        self.cpu_logical_count = max(logical_cpu_count, 1)
 
     def reset_chain(self) -> None:
         self._last_ev = None
         self._last_wall_s = None
+        self._last_wall_unix_s = None
+        self._last_cpu_total_s = None
 
     def on_train_batch_start(
         self,
@@ -193,18 +300,44 @@ class AppendixTrainE2EBenchmark:
         epoch: int,
         ev: object,
         wall_time_s: float,
+        wall_unix_s: float,
     ) -> None:
         if not self.enabled:
             return
         if epoch < self.measure_start_epoch:
             self.reset_chain()
             return
+        curr_cpu_total_s: float | None = None
+        if self.cpu_enabled:
+            curr_cpu_total_s, self.cpu_pid_list = sample_total_cpu_time_s(
+                self.cpu_pid_list
+            )
         if self._last_ev is not None:
             self.gpu_pairs.append((self._last_ev, ev))
         if self._last_wall_s is not None:
-            self.wall_ms.append((wall_time_s - self._last_wall_s) * 1000.0)
+            wall_delta_s = wall_time_s - self._last_wall_s
+            self.wall_ms.append(wall_delta_s * 1000.0)
+            if self._last_wall_unix_s is not None:
+                self.interval_start_unix_s.append(self._last_wall_unix_s)
+                self.interval_end_unix_s.append(wall_unix_s)
+            if (
+                self.cpu_enabled
+                and curr_cpu_total_s is not None
+                and self._last_cpu_total_s is not None
+                and wall_delta_s > 0
+            ):
+                cpu_delta_s = max(0.0, curr_cpu_total_s - self._last_cpu_total_s)
+                used_cores = cpu_delta_s / wall_delta_s
+                self.cpu_used_cores.append(used_cores)
+                self.cpu_utilization_pct.append(
+                    used_cores / self.cpu_logical_count * 100.0
+                )
+                self.cpu_wall_s.append(wall_delta_s)
         self._last_ev = ev
         self._last_wall_s = wall_time_s
+        self._last_wall_unix_s = wall_unix_s
+        if self.cpu_enabled:
+            self._last_cpu_total_s = curr_cpu_total_s
         self.train_batches_seen += 1
 
     def record_memory_snapshot(self) -> None:
@@ -224,6 +357,11 @@ class AppendixTrainE2EBenchmark:
         if self.measure_batches > 0:
             gpu_pairs = gpu_pairs[: self.measure_batches]
             wall_ms = wall_ms[: self.measure_batches]
+        interval_start_unix_s = self.interval_start_unix_s[skipped_intervals:]
+        interval_end_unix_s = self.interval_end_unix_s[skipped_intervals:]
+        if self.measure_batches > 0:
+            interval_start_unix_s = interval_start_unix_s[: self.measure_batches]
+            interval_end_unix_s = interval_end_unix_s[: self.measure_batches]
         gpu_ms = [ev_prev.elapsed_time(ev_curr) for (ev_prev, ev_curr) in gpu_pairs]
         payload: dict[str, int | float | bool | str] = {
             "system": self.system,
@@ -307,6 +445,130 @@ class AppendixTrainE2EBenchmark:
                 }
             )
         print(f"APPENDIX_TRAIN_E2E_SUMMARY {json.dumps(payload, sort_keys=True)}")
+        if reserved_mib or allocated_mib:
+            memory_curve_payload: dict[str, int | float | bool | str | list[float]] = {
+                "system": self.system,
+                "rank": self.rank,
+                "compile": self.compile_enabled,
+                "measure_start_epoch": self.measure_start_epoch,
+                "warmup_batches": self.warmup_batches,
+                "measure_batches_target": self.measure_batches,
+                "measured_batches": len(reserved_mib),
+                "reserved_mib_curve": [round(v, 4) for v in reserved_mib],
+                "allocated_mib_curve": [round(v, 4) for v in allocated_mib],
+            }
+            print(
+                f"APPENDIX_TRAIN_MEMORY_CURVE {json.dumps(memory_curve_payload, sort_keys=True)}"
+            )
+        if interval_start_unix_s and interval_end_unix_s:
+            window_payload = {
+                "system": self.system,
+                "rank": self.rank,
+                "window_start_unix_s": interval_start_unix_s[0],
+                "window_end_unix_s": interval_end_unix_s[-1],
+                "measured_batches": len(interval_start_unix_s),
+            }
+            print(f"APPENDIX_TRAIN_WINDOW {json.dumps(window_payload, sort_keys=True)}")
+            interval_payload = {
+                "system": self.system,
+                "rank": self.rank,
+                "measured_batches": len(interval_start_unix_s),
+                "interval_start_unix_s": interval_start_unix_s,
+                "interval_end_unix_s": interval_end_unix_s,
+            }
+            print(
+                f"APPENDIX_TRAIN_INTERVALS {json.dumps(interval_payload, sort_keys=True)}"
+            )
+        if self.gpu_curve_enabled:
+            gpu_busy_pct_curve = [
+                (gpu_ms_value / wall_ms_value * 100.0)
+                if wall_ms_value > 0
+                else 0.0
+                for gpu_ms_value, wall_ms_value in zip(gpu_ms, wall_ms)
+            ]
+            gpu_payload: dict[str, int | float | bool | str | list[float]] = {
+                "system": self.system,
+                "rank": self.rank,
+                "compile": self.compile_enabled,
+                "measure_start_epoch": self.measure_start_epoch,
+                "warmup_batches": self.warmup_batches,
+                "measure_batches_target": self.measure_batches,
+                "measured_batches": len(gpu_busy_pct_curve),
+                "gpu_ms_curve": [round(v, 4) for v in gpu_ms],
+                "wall_ms_curve": [round(v, 4) for v in wall_ms],
+                "gpu_busy_pct_curve": [
+                    round(v, 4) for v in gpu_busy_pct_curve
+                ],
+            }
+            if gpu_busy_pct_curve:
+                ordered_gpu_busy = sorted(gpu_busy_pct_curve)
+                n_gpu_busy = len(ordered_gpu_busy)
+                gpu_payload.update(
+                    {
+                        "gpu_busy_pct_mean": sum(ordered_gpu_busy) / n_gpu_busy,
+                        "gpu_busy_pct_p50": ordered_gpu_busy[
+                            int(0.50 * (n_gpu_busy - 1))
+                        ],
+                        "gpu_busy_pct_p90": ordered_gpu_busy[
+                            int(0.90 * (n_gpu_busy - 1))
+                        ],
+                        "gpu_busy_pct_max": ordered_gpu_busy[-1],
+                    }
+                )
+            print(f"APPENDIX_TRAIN_GPU_UTIL_CURVE {json.dumps(gpu_payload, sort_keys=True)}")
+        if self.cpu_enabled and self.rank == 0:
+            cpu_skip = min(self.warmup_batches, len(self.cpu_used_cores))
+            cpu_used_cores = self.cpu_used_cores[cpu_skip:]
+            cpu_utilization_pct = self.cpu_utilization_pct[cpu_skip:]
+            cpu_wall_s = self.cpu_wall_s[cpu_skip:]
+            if self.measure_batches > 0:
+                cpu_used_cores = cpu_used_cores[: self.measure_batches]
+                cpu_utilization_pct = cpu_utilization_pct[: self.measure_batches]
+                cpu_wall_s = cpu_wall_s[: self.measure_batches]
+            cpu_payload: dict[str, int | float | bool | str | list[int] | list[float]] = {
+                "system": self.system,
+                "rank": self.rank,
+                "compile": self.compile_enabled,
+                "measure_start_epoch": self.measure_start_epoch,
+                "warmup_batches": self.warmup_batches,
+                "measure_batches_target": self.measure_batches,
+                "tracked_pid_count": len(self.cpu_pid_list),
+                "tracked_pids": self.cpu_pid_list,
+                "logical_cpu_count": self.cpu_logical_count,
+                "measured_batches": len(cpu_used_cores),
+                "used_cores_curve": [round(v, 4) for v in cpu_used_cores],
+                "utilization_pct_curve": [
+                    round(v, 4) for v in cpu_utilization_pct
+                ],
+                "wall_interval_s_curve": [round(v, 6) for v in cpu_wall_s],
+            }
+            if cpu_used_cores:
+                ordered_used = sorted(cpu_used_cores)
+                n_used = len(ordered_used)
+                cpu_payload.update(
+                    {
+                        "used_cores_mean": sum(ordered_used) / n_used,
+                        "used_cores_p50": ordered_used[int(0.50 * (n_used - 1))],
+                        "used_cores_p90": ordered_used[int(0.90 * (n_used - 1))],
+                        "used_cores_max": ordered_used[-1],
+                    }
+                )
+            if cpu_utilization_pct:
+                ordered_util = sorted(cpu_utilization_pct)
+                n_util = len(ordered_util)
+                cpu_payload.update(
+                    {
+                        "utilization_pct_mean": sum(ordered_util) / n_util,
+                        "utilization_pct_p50": ordered_util[
+                            int(0.50 * (n_util - 1))
+                        ],
+                        "utilization_pct_p90": ordered_util[
+                            int(0.90 * (n_util - 1))
+                        ],
+                        "utilization_pct_max": ordered_util[-1],
+                    }
+                )
+            print(f"APPENDIX_TRAIN_CPU_UTIL_CURVE {json.dumps(cpu_payload, sort_keys=True)}")
 
 
 def compile_tgl_model_submodules(model: torch.nn.Module) -> list[str]:
@@ -544,7 +806,11 @@ if args.local_rank < args.num_gpus:
         measure_start_epoch=args.measure_start_epoch,
         warmup_batches=args.warmup_batches,
         measure_batches=args.measure_batches,
+        gpu_curve_enabled=args.gpu_util_curve,
+        cpu_enabled=args.cpu_util_benchmark and args.local_rank == 0,
     )
+    if appendix_bench.cpu_enabled:
+        appendix_bench.configure_cpu_benchmark(discover_sibling_rank_pids())
     
     
     def trace_handler(p):
@@ -568,6 +834,7 @@ if args.local_rank < args.num_gpus:
         ev = torch.cuda.Event(enable_timing=True)
         ev.record(torch.cuda.current_stream())
         now_wall = time.perf_counter()
+        now_wall_unix = time.time()
 
         if _last_train_ev is not None:
             train_s2s_pairs.append((_last_train_ev, ev))
@@ -580,6 +847,7 @@ if args.local_rank < args.num_gpus:
             epoch=cur_epoch,
             ev=ev,
             wall_time_s=now_wall,
+            wall_unix_s=now_wall_unix,
         )
 
     def _reset_train_chain():

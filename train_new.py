@@ -656,10 +656,11 @@ if args.local_rank < args.num_gpus:
                 print('\t{}'.format(format_lr_scheduler_step(lr_scheduler_step)))
             continue
         elif my_model_state[0] == 0:
-            # Allow the host to start the next batch's sampling once the current
-            # batch has finished static feature H2D. We still gate
-            # mailbox.prep_input_mails() on a barrier so dynamic state is fresh
-            # before memory/mailbox is moved to GPU.
+            # The host is allowed to sample/scatter the next batch early, but
+            # no worker may call mailbox.prep_input_mails() for batch n+1 until
+            # every rank has finished update_mailbox()/update_memory() for batch
+            # n. This barrier sits immediately before prep_input_mails() so the
+            # dynamic state consumed by batch n+1 is globally fresh.
             my_mfgs = [None]
             multi_mfgs = [None] * (args.num_gpus + 1)
             my_root = [None]
@@ -692,6 +693,9 @@ if args.local_rank < args.num_gpus:
             eid = None
             block = None
             if mailbox is not None:
+                # Cross-rank freshness gate: all ranks must have completed the
+                # previous batch's mailbox/memory write-back before any rank can
+                # read mailbox/memory for the next batch.
                 torch.distributed.barrier()
                 mailbox.prep_input_mails(mfgs[0], use_pinned_buffers=True)
                 root_nodes = my_root[0]
@@ -1077,9 +1081,12 @@ else:
                     my_block = [None]
                     torch.distributed.scatter_object_list(my_block, multi_block, src=args.num_gpus)
             # Wait only until workers have completed static H2D for this batch.
-            # They will block on mailbox.prep_input_mails() until the previous
-            # batch's dynamic-state updates are visible, but the host can already
-            # begin sampling the next batch.
+            # The worker-side barrier before mailbox.prep_input_mails() then
+            # enforces the stronger guarantee we want:
+            #   update_mailbox/update_memory(batch n)
+            #     happens-before
+            #   prep_input_mails(batch n+1)
+            # while still allowing host-side sampling of batch n+1 to overlap.
             torch.distributed.barrier()
             time_tot += time.time() - t_tot_s
             time_tot += time.time() - t_tot_s
